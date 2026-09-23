@@ -9,7 +9,7 @@ function cfg = config()
 
     % data: sets the import parameters
     cfg.data.hdf5_dir     = '/run/media/alexandercrain/Secondary_Drive/Event Datasets/SPOT/HDF5/';
-    cfg.data.hdf5_file    = 'recording_20251029_135047.hdf5';
+    cfg.data.hdf5_file    = 'recording_20251029_131131.hdf5';
     cfg.data.start_time_s = 60.0;    % T0 [s]: first event time used
     cfg.data.end_time_s   = 185.0;   % T1 [s]: last event time used
 
@@ -19,7 +19,7 @@ function cfg = config()
 
     % surface: event-surface parameters for cell-fitting
     cfg.surface.cell_px                 = 8;  % size of spacial cell kernel [px]
-    cfg.surface.cell_s                  = 0.5;  % size of temporal window [s]
+    cfg.surface.cell_s                  = 0.8;  % size of temporal window [s]
     cfg.surface.sigma_s                 = 0.03;  % time scale -- number of seconds that count as "1" pixel
     cfg.surface.min_events_per_cell     = 15;  % no plane-fitting below this number
     cfg.surface.min_time_normal         = 0.05;  % used to reject static flicker
@@ -36,15 +36,15 @@ function cfg = config()
     cfg.adjust.tangent_weight           = 0.15;  % keeps normal equations for going singular
 
     % data: slicing
-    cfg.data.slice_s                    = 0.05;  % batch length [s]; every stateful stage
+    cfg.data.slice_s                    = 0.1;  % batch length [s]; every stateful stage
     cfg.data.image_size                 = [640 480];  % sensor width, height [px] (DVXplorer)
 
     % track: 2D feature tracking over accepted events 
     cfg.track.gate_px                   = 3.0;  % claim radius around a track's prediction
     cfg.track.seed_cell_px              = 6;  % cell size for seeding new tracks
-    cfg.track.min_events                = 5;  % events needed to claim, and to seed
+    cfg.track.min_events                = 3;  % events needed to claim, and to seed
     cfg.track.gain_position             = 0.6;  % constant gain on position correction
-    cfg.track.gain_velocity             = 0.12;  % constant gain on velocity correction
+    cfg.track.gain_velocity             = 0.25;  % constant gain on velocity correction
     cfg.track.max_miss                  = 15;  % slices unclaimed before a track retires
     cfg.track.min_length                = 20;  % samples for a track to be returned
 

@@ -24,10 +24,14 @@ function [accepted_idx, first, last] = slice_events(t, accept, centers, dt)
     accepted_idx = find(accept);
     edges        = [centers(:) - dt / 2; centers(end) + dt / 2];
     
-    % Count the accepted events in every slice in one pass, then turn the
-    % counts into start and end positions
-    counts = histcounts(t(accepted_idx), edges)';
-    last   = cumsum(counts);
+    % Counts are relative to the requested window, whereas accepted_idx
+    % also includes earlier events (in particular, the warm start).
+    % Offset the positions by that prefix. Exclude the final edge because
+    % histcounts otherwise includes it in its last bin.
+    accepted_t = t(accepted_idx);
+    prefix = nnz(accepted_t < edges(1));
+    counts = histcounts(accepted_t(accepted_t < edges(end)), edges)';
+    last   = prefix + cumsum(counts);
     first  = last - counts + 1;
 
 end
