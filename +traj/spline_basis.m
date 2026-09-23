@@ -24,7 +24,7 @@ function [idx, val] = spline_basis(trajectory, t)
     % Then we calculate the position within the segment
     s = min(max(u - j, -0.5), 1.5);
     
-    % Finally we calculate the four weights for a uniform cubin B-spline
+    % Finally we calculate the four weights for a uniform cubic B-spline
     % basis function -- each column of the 'val' variation contains a
     % single weight and each row is one requested time
     val = [(1 - s).^3, ...

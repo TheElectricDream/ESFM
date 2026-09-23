@@ -1,8 +1,16 @@
 function write_ply(path, points)
-file = fopen(path, 'w');
-assert(file > 0, 'Cannot open cloud output: %s', path);
-cleanup = onCleanup(@() fclose(file));
-fprintf(file, 'ply\nformat ascii 1.0\nelement vertex %d\n', size(points, 1));
-fprintf(file, 'property double x\nproperty double y\nproperty double z\nend_header\n');
-fprintf(file, '%.17g %.17g %.17g\n', points');
+    %   This function writes a point cloud as an ASCII PLY file.
+    %
+    %   Inputs:
+    %       PATH -> Char, output file path
+    %       POINTS -> [N, 3], point coordinates
+    
+    fid = fopen(path, 'w');
+    assert(fid > 0, 'Cannot open %s for writing.', path);
+    cleanup = onCleanup(@() fclose(fid));
+    
+    fprintf(fid, 'ply\nformat ascii 1.0\nelement vertex %d\n', size(points, 1));
+    fprintf(fid, 'property double x\nproperty double y\nproperty double z\nend_header\n');
+    fprintf(fid, '%.17g %.17g %.17g\n', points');
+
 end

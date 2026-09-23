@@ -18,7 +18,6 @@ function [xobj, cov] = triangulate(R, T, ii, uv, n, npts, eps_w, cam)
     %       N -> [M, 2], unit edge normal at each observation
     %       NPTS -> Scalar, number of features/landmarks
     %       EPS_W -> Scalar, weight of the tangential row 
-    %       XOBJ -> [M, 3], points in object frame
     %       CAM -> Struct, camera model with focal and principal lengths
     %
     %   Outputs:
@@ -72,7 +71,6 @@ function [xobj, cov] = triangulate(R, T, ii, uv, n, npts, eps_w, cam)
     A_norm  = 1.0 * (nX .* A1 + nY .* A2);
     b_norm  = 1.0 * (nX .* b1 + nY .* b2);
 
-    % Calculate the TANGENTIAL direction equations - weighted lower
     % Calculate the TANGENTIAL direction equations - weighted lower
     A_tang = eps_w * (tangent(:,1) .* A1 + tangent(:,2) .* A2);
     b_tang = eps_w * (tangent(:,1) .* b1 + tangent(:,2) .* b2);
