@@ -64,8 +64,7 @@ fprintf('Warm Start - Tracks Generated: %f [sec]\n', toc);
 % Tracks can start and end at different times, so we need to organize them
 % into a common time axis
 tic;
-[obs, track_ids] = track.build_observations(tracks, slice_times, ...
-    cfg.warm.min_track_motion_px);
+[obs, track_ids] = track.build_observations(tracks, slice_times);
 fprintf('Warm Start - Observations Built: %f [sec]\n', toc);
 
 wcfg = cfg.warm;
@@ -108,10 +107,9 @@ bestCoarse = fits(valid(j));
 bestRefined = warm.refine_fit(bestCoarse, resid, nll, wcfg);
 fprintf('Warm Start - Fit Refined: %f [sec]\n', toc);
 
-% Rate the profile
-tic;
-[prof, interval] = warm.rate_profile(bestRefined, resid, nll, wcfg);
-fprintf('Warm Start - Rate Profiled: %f [sec]\n', toc);
+% (Diagnostic, not needed by the pipeline: the cost as a function of the
+% rate can be mapped with warm.rate_profile(bestRefined, resid, nll, wcfg)
+% and plotted with viz.inspect_rate_profile.)
 
 % Initialize the trajectory structure
 trajectory = traj.create_trajectory(cfg.data.start_time_s, cfg.data.end_time_s, ...
@@ -166,6 +164,14 @@ run_log  = nan(numel(centers), 6);
 t_prev   = warmEnd;
 tic_loop = tic;
 
+% The spline is free to move from the first slice after the warm start
+map.knots_free = true;
+
+% Observation count at the last global adjustment -- the next one runs
+% once the map has grown by cfg.prog.global_growth. Early on, when the map
+% is small, this happens every few slices; later it becomes rare.
+n_at_global = size(map.O, 1);
+
 % The pose as estimated online, at each slice centre, from past data only
 online = struct('t', centers, 'theta', nan(numel(centers), 1), ...
     'T', nan(numel(centers), 3), 'a', nan(numel(centers), 3), ...
@@ -175,9 +181,6 @@ online = struct('t', centers, 'theta', nan(numel(centers), 1), ...
 for f = 1:numel(centers)
     tc = centers(f);
 
-    % The spline may move once the warm start is over
-    map.knots_free = tc >= warmEnd + cfg.prog.knots_free_after_s;
-
     % This slice's accepted events
     s     = acc_idx(s_first(f):s_last(f));
     slice = struct('t', ev.t(s), 'x', ev.x(s), 'y', ev.y(s), 'flow', ev.flow(s, :));
@@ -186,19 +189,17 @@ for f = 1:numel(centers)
     [map, info] = prog.step(map, slice, tc, cfg, cam);
 
     % Local adjustment: recent knots and recently seen points
-    if map.knots_free && prog.crossed(t_prev, tc, cfg.prog.local_every_s, trajectory.t0)
+    if prog.crossed(t_prev, tc, cfg.prog.local_every_s, trajectory.t0)
         [map, linfo] = prog.local_adjust(map, tc, cam, cfg);
     end
 
-    % Global adjustment: everything well observed so far
-    early = any(t_prev - warmEnd < cfg.prog.early_global_s & ...
-                tc - warmEnd >= cfg.prog.early_global_s);
-    if early || prog.crossed(t_prev, tc, cfg.prog.global_every_s, trajectory.t0)
+    % Global adjustment: everything, whenever the map has grown enough
+    if size(map.O, 1) >= cfg.prog.global_growth * n_at_global
         t_g = tic;
         [map, ginfo] = prog.global_adjust(map, tc, cam, cfg);
+        n_at_global  = size(map.O, 1);
         fprintf('  global adjustment at %.1f s: %d points, %d steps, normal RMS %.3f px (%.1f s)\n', ...
-            tc, nnz(map.nobs >= cfg.prog.global_min_nobs), ginfo.accepted_steps, ...
-            ginfo.rms, toc(t_g));
+            tc, nnz(map.alive), ginfo.accepted_steps, ginfo.rms, toc(t_g));
     end
 
     % Online pose at tc, after everything this slice did
@@ -211,7 +212,7 @@ for f = 1:numel(centers)
     rate_now = traj.rate_deg_s(map.traj, tc);
     run_log(f, :) = [tc, rate_now, nnz(map.alive), info.explained, info.matched, info.n_new];
 
-    if prog.crossed(t_prev, tc, cfg.prog.print_every_s, trajectory.t0)
+    if prog.crossed(t_prev, tc, 10, trajectory.t0)  % progress every 10 s
         fprintf('t = %.1f s: map %d, matched %d, explained %.0f %%, rate %.3f deg/s, rows %d (%.0f s)\n', ...
             tc, nnz(map.alive), info.matched, 100 * info.explained, rate_now, ...
             size(map.O, 1), toc(tic_loop));

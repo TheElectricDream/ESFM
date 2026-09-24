@@ -69,16 +69,14 @@ function [prob] = setup_problem(trajectory, landmarks, observations, ...
         numel(unique(prob.free_landmarks)) == numel(prob.free_landmarks), ...
         'Free landmarks must be unique landmark indices.');
 
-    % Now scale the measurement directions by its uncertainty ('whiten',
-    % apparently) - by dividing by the pixel noise we make every image
-    % residual dimensionless 
-    prob.wn = prob.nn / acfg.sigma_px;
-    prob.wt = acfg.tangent_weight *...
-        [-prob.nn(:, 2), prob.nn(:, 1)] / acfg.sigma_px;
+    % The measurement directions: image residuals stay in pixels. A
+    % common pixel-noise scale would only rescale the image cost against
+    % the priors, which the prior weights already set, so there is none
+    prob.wn = prob.nn;
+    prob.wt = acfg.tangent_weight * [-prob.nn(:, 2), prob.nn(:, 1)];
 
-    % We also need to rescale the Cauchy cost function so that it is using
-    % the same units
-    prob.cauchy_sq = (acfg.cauchy_px / acfg.sigma_px)^2;
+    % The Cauchy scale, in the same (pixel) units as the residuals
+    prob.cauchy_sq = acfg.cauchy_px^2;
 
     % Now we need to build the Jacobian, rememberin that '0' in the
     % parameter vector indicates a frozen parameter - we build the Jacobian

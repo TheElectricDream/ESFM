@@ -42,6 +42,15 @@ function [cam] = read_calibration(camera_cfg)
         cam.k2 = d(2); 
     end
 
+    % The sensor size is stored alongside the intrinsics
+    w_tok = regexp(text, '<image_width>\s*(\d+)', 'tokens', 'once');
+    h_tok = regexp(text, '<image_height>\s*(\d+)', 'tokens', 'once');
+    if isempty(w_tok) || isempty(h_tok)
+        error('io:read_calibration', ...
+            'Calibration XML "%s" has no image_width/image_height.', xml_path);
+    end
+    cam.image_size = [str2double(w_tok{1}) str2double(h_tok{1})];  % [width height] [px]
+
     % Print a success message
     fprintf(['Calibration Loaded: f = [%.2f %.2f], c = [%.2f %.2f],'...
         ' k = [%.5f %.5f]\n'], cam.focal, cam.principal, cam.k1, cam.k2);

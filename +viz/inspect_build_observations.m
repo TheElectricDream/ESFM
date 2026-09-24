@@ -1,10 +1,9 @@
 %% Inspect build_observations without changing its inputs or outputs
-% Run after producing tracks, slice_times, obs, track_ids, and min_motion.
-% min_motion must be the SAME value passed to build_observations.
+% Run after producing tracks, slice_times, obs, and track_ids.
 % No clear/close commands: existing workspace data and figures are preserved.
 % The diagnostic variables are collected in bo_diag.
 
-min_motion = cfg.warm.min_track_motion_px;
+min_motion = 0;  % build_observations no longer filters by motion
 
 assert(exist('tracks','var') == 1 && exist('slice_times','var') == 1 && ...
     exist('obs','var') == 1 && exist('track_ids','var') == 1 && ...

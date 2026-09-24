@@ -1,8 +1,9 @@
 function [map, promo] = promote_candidates(map, tc, cam, cfg)
     %   This function triangulates every mature candidate -- enough
     %   samples, tracked while the target turned enough -- and adds it to
-    %   the map as a landmark if it lies in front of the camera,
-    %   reprojects well across its history, and is well conditioned.
+    %   the map as a landmark if it lies in front of the camera and
+    %   reprojects well across its history (the turn-angle test already
+    %   guarantees a real viewing baseline).
     %   Every mature candidate is retired after its attempt, promoted or
     %   not (retained gold choice).
     %
@@ -16,11 +17,11 @@ function [map, promo] = promote_candidates(map, tc, cam, cfg)
     %       MAP -> Struct, with new landmarks added and mature candidates
     %              removed
     %       PROMO -> Struct, counts: attempted, promoted, and failures of
-    %              each gate (fail_depth, fail_rms, fail_cov; a candidate
-    %              can fail more than one)
+    %              each gate (fail_depth, fail_rms; a candidate can fail
+    %              both)
     
     promo = struct('attempted', 0, 'promoted', 0, ...
-        'fail_depth', 0, 'fail_rms', 0, 'fail_cov', 0);
+        'fail_depth', 0, 'fail_rms', 0);
     
     if isempty(map.cand)
         return;
@@ -45,23 +46,20 @@ function [map, promo] = promote_candidates(map, tc, cam, cfg)
         % Triangulate one point from the whole history, with the pose at
         % each sample time
         [R, T] = traj.pose(map.traj, h(:, 1));
-        [X, C] = geom.triangulate(R, T, ones(S, 1), h(:, 2:3), h(:, 4:5), 1, ...
+        X = geom.triangulate(R, T, ones(S, 1), h(:, 2:3), h(:, 4:5), 1, ...
             cfg.adjust.tangent_weight, cam);
     
         % Check it against its own history
         [pr, Y]   = geom.project(R, T, repmat(X, S, 1), cam);
         rms_px    = sqrt(mean(sum((h(:, 2:3) - pr) .* h(:, 4:5), 2).^2));
-        sigma_max = sqrt(max(eig(squeeze(C(1, :, :)))));
     
         ok_depth = min(Y(:, 3)) > cfg.prog.cand_min_depth;
         ok_rms   = rms_px < cfg.prog.cand_max_rms_px;
-        ok_cov   = sigma_max < cfg.prog.cand_max_sigma;
     
         promo.fail_depth = promo.fail_depth + ~ok_depth;
         promo.fail_rms   = promo.fail_rms   + ~ok_rms;
-        promo.fail_cov   = promo.fail_cov   + ~ok_cov;
     
-        if ok_depth && ok_rms && ok_cov
+        if ok_depth && ok_rms
             % New landmark, with its whole history as observations
             id = size(map.X, 1) + 1;
             map.X(id, :)         = X;

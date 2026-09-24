@@ -35,8 +35,8 @@ function [map, info] = step(map, slice, tc, cfg, cam)
     % 1. Warp events to tc -- independent of the motion, so done once
     [warped, direction] = prog.warp_events(slice, tc);
 
-    % 2-3. Associate; if enough unambiguous claims, correct the recent
-    % motion and associate again with the corrected motion
+    % 2-3. Associate, correct the recent motion, and associate again with
+    % the corrected motion
     for pass = 1:2
         pred      = prog.predict(map, tc, cam, cfg);
         nrm_k     = map.nrm(pred.ids, :);
@@ -49,8 +49,7 @@ function [map, info] = step(map, slice, tc, cfg, cam)
         % at most once per pass and gates on its previous normal
         map.nrm(claims.rows(:, 2), :) = claims.rows(:, 5:6);
 
-        if pass == 1 && map.knots_free && ...
-                nnz(claims.mature) >= cfg.prog.min_mature_claims
+        if pass == 1 && map.knots_free
             [map.traj, corr] = prog.correct_motion(map, claims.rows, tc, cam, cfg);
             info.corrected        = true;
             info.correction_steps = corr.accepted_steps;

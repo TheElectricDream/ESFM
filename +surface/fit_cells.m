@@ -117,9 +117,11 @@ function [f, dbg] = fit_cells(t, x, y, scfg, offset)
     % Now that we have the results for all the valid cells, we can set some
     % constraints on what is acceptable
     planarity = w_min ./ max(w_mid, 1e-12);  % If ratio is >>, it's not a sheet
+
+    % A hot pixel spreads only in time, so its normal lies in the image
+    % plane and the time-normal test below already rejects it
     ok        = (n >= scfg.min_events_per_cell) & ...
-                (abs(nrm(:, 3)) > scfg.min_time_normal) & ...
-                (w_mid > scfg.min_in_surface_extent);
+                (abs(nrm(:, 3)) > scfg.min_time_normal);
 
     % Now we can calculate the velocity along the planes that we have
     % identified -- first we protect against a zero division

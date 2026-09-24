@@ -96,15 +96,11 @@ function [accept, flow] = compute(ev, scfg, time_range)
             f = surface.fit_cells(ev.t(idx), ev.x(idx), ev.y(idx), scfg, ...
                 offsets(offset_case, :));
 
-            % Calculate the speed 
-            speed = sqrt(f.vel(:, 1).^2 + f.vel(:, 2).^2);
-
             % Calculate if a grid is acceptable -- these are basically more
             % criteria that are added to indicate good flow, so looking for
-            % a thin sheet relative to width, and resonable max speed, and
-            % strong indication that warped events are piling up
+            % a thin sheet relative to width, and strong indication that
+            % warped events are piling up
             ok = f.ok & f.planarity <= scfg.max_planarity_ratio & ...
-                speed <= scfg.max_normal_speed_px_s & ...
                 f.support >= scfg.min_warped_support;
 
             % Check that the current planarity values is the best set

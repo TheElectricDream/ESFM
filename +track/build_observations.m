@@ -1,18 +1,16 @@
-function [obs, track_ids] = build_observations(tracks, slice_times, min_motion)
+function [obs, track_ids] = build_observations(tracks, slice_times)
     %   This function is used to organize the track observations into a
     %   common time frame. Any given track is not guarenteed to
     %   start at the same time, and when we reconstruct the point cloud it
     %   is desirable to query the dataset and ask 'at X [seconds], which
     %   tracks are visible and what observation on said track occurs at
-    %   that time step'. Tracks that have fewer than two sampled are
-    %   rejected, as are tracks whose pixel-coordinate standard deviations
-    %   are below the 'min_motion' threshold. Right now, this is used to
-    %   reject hot-pixels, but in the future we can combine this with o
+    %   that time step'. Tracks that have fewer than two samples are
+    %   rejected. (Hot pixels never reach this point: the surface stage
+    %   rejects cells whose events do not move.)
     %
     %   Inputs:
     %       TRACKS -> {1, K} cell, track histories from track.track_events
     %       SLICE_TIMES -> [F, 1], reference times used by tracking
-    %       MIN_MOITION -> Scalar, minimum track motion accepted, uses STD
     %
     %   Outputs:
     %       OBS -> [F, N, 4], observations (u, v, normal_x, normal_y), NaN where
@@ -70,18 +68,6 @@ function [obs, track_ids] = build_observations(tracks, slice_times, min_motion)
         % Reject tracks with single samples as this means there is no
         % motion to assess anyways
         if size(h, 1) < 2
-            continue;
-        end
-
-        % Calculate the standard deviation of the x & y positions --
-        % remember that '0' uses the sample-standard-deviation
-        % normalization and '1' operates on rows
-        positionStd = std(h(:, 2:3), 0, 1);
-
-        % Check if the motion exceeds the minimum threshold, but only
-        % reject tracks if both the 'x' and 'y' standard deviations fall
-        % below the threshold
-        if max(positionStd) < min_motion
             continue;
         end
 

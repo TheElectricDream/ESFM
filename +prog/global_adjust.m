@@ -15,8 +15,9 @@ function [map, info] = global_adjust(map, tc, cam, cfg)
     %       MAP -> Struct, with refined trajectory and landmarks
     %       INFO -> Struct, adjuster diagnostics from adjust.refine
     
-    % Well-observed landmarks and all their observations
-    pts  = find(map.alive & map.nobs >= cfg.prog.global_min_nobs);
+    % Every live landmark and all its observations -- each one is born
+    % with at least cfg.prog.cand_min_samples observations
+    pts  = find(map.alive);
     rows = ismember(map.O(:, 2), pts);
     
     % Mean motion always; the spline up to tc only once it is released

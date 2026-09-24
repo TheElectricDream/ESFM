@@ -35,7 +35,7 @@ function pred = predict(map, tc, cam, cfg)
     
     % Visible: in front of the camera and inside the image plus a margin
     m  = cfg.prog.image_margin_px;
-    sz = cfg.data.image_size;
+    sz = cam.image_size;
     pred.inside = pred.Y(:, 3) > cfg.adjust.min_depth & ...
         pred.uv(:, 1) > -m & pred.uv(:, 1) < sz(1) + m & ...
         pred.uv(:, 2) > -m & pred.uv(:, 2) < sz(2) + m;

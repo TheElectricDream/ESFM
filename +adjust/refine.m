@@ -84,9 +84,9 @@ function [tr, X, info] = refine(tr, X, observations, free_parameters, ...
         end
     end
     
-    % Summary: RMS of the normal residuals, converted back to pixels
+    % Summary: RMS of the normal residuals [px]
     info.cost          = cost;
-    info.rms           = sqrt(mean((r(1:2:prob.n_img) * acfg.sigma_px).^2));
+    info.rms           = sqrt(mean(r(1:2:prob.n_img).^2));
     info.active_hinges = nnz(r(prob.n_img + prob.n_prior + 1:end));
 
 end

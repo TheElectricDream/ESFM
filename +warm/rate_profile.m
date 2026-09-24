@@ -1,4 +1,4 @@
-function [prof, interval] = rate_profile(best, resid, nll, wcfg)
+function [prof, interval] = rate_profile(best, resid, nll, wcfg, rates)
     %   Maps the cost as a function of rotation rate so that we can assess
     %   how much the other parameters are compensating for errors in said
     %   rate. This function is a diagnostic one.
@@ -8,9 +8,10 @@ function [prof, interval] = rate_profile(best, resid, nll, wcfg)
     %       RESID -> Handle, @(a, w, q) giving raw residuals
     %       NLL -> Handle, @(a, w, q) giving the scalar robust cost
     %       WCFG -> Struct, warm-start parameters
+    %       RATES -> [1, K], rates to scan [deg/s] (default 1:0.2:12)
     %
     %   Outputs:
-    %       PROF -> [1, K], cost at each rate in wcfg.rate_profile_deg_s
+    %       PROF -> [1, K], cost at each rate in RATES
     %       INTERVAL -> Scalar, half-width of the low-cost valley, as a fraction
     
     % First we set the optimization
@@ -23,8 +24,10 @@ function [prof, interval] = rate_profile(best, resid, nll, wcfg)
         -wcfg.max_velocity_per_s, -wcfg.max_velocity_per_s, -wcfg.max_velocity_per_s];
     ub = -lb;
 
-    % We extract the vector of rates that we want to investigate
-    rates = wcfg.rate_profile_deg_s;
+    % The rates that we want to investigate
+    if nargin < 5
+        rates = 1:0.2:12;
+    end
 
     % Preallocate an array
     prof = nan(size(rates));

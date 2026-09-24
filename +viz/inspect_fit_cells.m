@@ -126,8 +126,7 @@ function inspect_fit_cells(t, x, y, dbg, scfg, opts)
     title('Planarity (lower = thinner sheet)');
 
     subplot(2, 2, 2);
-    histogram(dbg.w_mid(p), 50); hold on;
-    xline(scfg.min_in_surface_extent, 'r--', 'threshold'); hold off;
+    histogram(dbg.w_mid(p), 50);
     xlabel('w_{mid}'); ylabel('# boxes');
     title('In-surface extent');
 

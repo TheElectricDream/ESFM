@@ -1,7 +1,7 @@
 
 figure('Color', 'w');
 
-plot(wcfg.rate_profile_deg_s, prof, 'o-');
+plot(rates, prof, 'o-');  % rates: the RATES passed to warm.rate_profile
 hold on;
 
 valid = isfinite(prof);
