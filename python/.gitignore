@@ -4,3 +4,4 @@ __pycache__/
 figures/out/
 deck/*.pptx
 !deck/SRL_Slide_Template.pptx
+deck/preview/
