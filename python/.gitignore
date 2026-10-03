@@ -1,0 +1,6 @@
+cache/
+__pycache__/
+*.pyc
+figures/out/
+deck/*.pptx
+!deck/SRL_Slide_Template.pptx
