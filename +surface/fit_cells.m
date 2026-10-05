@@ -1,4 +1,4 @@
-function [f, dbg] = fit_cells(t, x, y, scfg, offset)
+function [f, dbg] = fit_cells(t, x, y, scfg, offset, compute_support)
     %   Creates a 3D volume of events, identifies planes, and fits to these
     %   plane. Edges at any given time step draw a line in X-Y -- as time
     %   progresses, these lines draw plane. This algorithm tries to
@@ -11,10 +11,19 @@ function [f, dbg] = fit_cells(t, x, y, scfg, offset)
     %       Y -> [N, 1], y-pixel location for all events
     %       SCFG -> Struct, contains parameters for surface estimation
     %       OFFSET -> [3, 1], offsets for shifting grid
+    %       COMPUTE_SUPPORT -> optional logical scalar, defaults to true.
+    %           False skips motion compensation and support counting for
+    %           the single-grid baseline. F.support is then NaN per event,
+    %           and the warped-coordinate/count debug arrays are empty.
     %
     %   Outputs:
     %       F -> Struct, outputs of velocity estimation algorithm
     %       DGB -> Struct, contains intermediate debug variables
+
+    if nargin < 6
+        compute_support = true;
+    end
+    validateattributes(compute_support, {'logical'}, {'scalar'});
     
     % Find the index bounds for the spatiotemporal kernel
     ix = floor((x + offset(1)) / scfg.cell_px);
@@ -142,30 +151,34 @@ function [f, dbg] = fit_cells(t, x, y, scfg, offset)
     % the velocity is wrong or it's not an edge. We basically want a sharp
     % output 
     
-    % Calculate the mean kernel velocity (v_ev) and the mean kernel time
-    % (tc)
+    % Associate each event with its cell's velocity.
     v_ev = vel(inv, :);  
-    tc = mt(inv) * scfg.sigma_s;
-    
-    % Using the velocity of the kenerl, apply a linear state warp that
-    % basically calculates where the current kernel would have been if the
-    % velocity is correct
-    xw = round(x - v_ev(:,1) .* (t - tc));  
-    yw = round(y - v_ev(:,2) .* (t - tc));
-    
-    % Assign a unique identifier for each kernel
-    wkey = inv * 1e7 + (yw + 1000) * 3000 + (xw + 1000);
 
-    % Then, label each distinct group, and sum up however many events
-    % landed in each group
-    [~, ~, winv] = unique(wkey);
-    wcnt = accumarray(winv, 1);
+    if compute_support
+        % Warp each event to its cell's mean timestamp.
+        tc = mt(inv) * scfg.sigma_s;
+        xw = round(x - v_ev(:,1) .* (t - tc));
+        yw = round(y - v_ev(:,2) .* (t - tc));
+
+        % Count events sharing a cell and rounded warped pixel.
+        wkey = inv * 1e7 + (yw + 1000) * 3000 + (xw + 1000);
+        [~, ~, winv] = unique(wkey);
+        wcnt = accumarray(winv, 1);
+        event_support = wcnt(winv);
+    else
+        % Support is uncomputed, rather than a measured zero count.
+        xw = [];
+        yw = [];
+        winv = [];
+        wcnt = [];
+        event_support = nan(size(inv));
+    end
 
     % Return results 
     f.ok = ok(inv);  
     f.vel = v_ev;  
     f.planarity = planarity(inv);  
-    f.support = wcnt(winv);
+    f.support = event_support;
 
     % (Optional) Return debug variables 
     if nargout > 1

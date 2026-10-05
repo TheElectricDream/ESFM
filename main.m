@@ -52,6 +52,11 @@ warmEnd     = warmStart + cfg.warm.duration_s;
 
 [ev.accept, ev.flow] = surface.compute(ev, cfg.surface, ...
                                        [warmStart, cfg.data.end_time_s]);
+                                       
+% [evBaseline.accept, evBaseline.flow] = surface.compute_baseline( ...
+%     ev, cfg.surface, [warmStart, cfg.data.end_time_s]);
+% ev = evBaseline;
+
 fprintf('Surfaces Computed: %f [sec]\n', toc);
 
 % Track accepted events into 2D features over the warm-start window

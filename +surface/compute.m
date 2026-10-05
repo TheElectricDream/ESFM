@@ -94,7 +94,7 @@ function [accept, flow] = compute(ev, scfg, time_range)
 
             % Calculate the surface velocities
             f = surface.fit_cells(ev.t(idx), ev.x(idx), ev.y(idx), scfg, ...
-                offsets(offset_case, :));
+                offsets(offset_case, :), true);
 
             % Calculate if a grid is acceptable -- these are basically more
             % criteria that are added to indicate good flow, so looking for
