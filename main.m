@@ -25,14 +25,24 @@ close all;
 %   happen even before I see data - usually these show up in a least quares
 %   problem as extra residuals that don't depend on observations.
 
+%-----%
+% The pipeline is an OFFLINE reconstruction of the point cloud: the whole
+% recording is read, a map is built in one forward pass, the rotation is
+% closed over all revolutions at once, and the map is rebuilt under the
+% corrected motion before the final refinement and the surface filter.
+%-----%
+
+%% [step] Configuration
 % Set up the configuration file
 cfg = config();
 
+%% [step] Load Events
 % Load in event data
 tic;
 ev = io.load_events(cfg.data);
 fprintf('Data Loaded: %f [sec]\n', toc);
 
+%% [step] Undistort
 % Load in the calibration file
 cam = io.read_calibration(cfg.camera);
 
@@ -45,13 +55,13 @@ fprintf('Data Calibrated: %f [sec]\n', toc);
 ev.x = xy(:,1);
 ev.y = xy(:,2);
 
+%% [step] Surface Flow
 % Calculate event surfaces (accept mask + normal flow)
 tic;
-warmStart   = cfg.data.start_time_s;
-warmEnd     = warmStart + cfg.warm.duration_s;
+t0 = cfg.data.start_time_s;
+t1 = cfg.data.end_time_s;
 
-[ev.accept, ev.flow] = surface.compute(ev, cfg.surface, ...
-                                       [warmStart, cfg.data.end_time_s]);
+[ev.accept, ev.flow] = surface.compute(ev, cfg.surface, [t0, t1]);
                                        
 % [evBaseline.accept, evBaseline.flow] = surface.compute_baseline( ...
 %     ev, cfg.surface, [warmStart, cfg.data.end_time_s]);
@@ -59,128 +69,70 @@ warmEnd     = warmStart + cfg.warm.duration_s;
 
 fprintf('Surfaces Computed: %f [sec]\n', toc);
 
-% Track accepted events into 2D features over the warm-start window
+%% [step] Seed Tracks
+%-----%
+% Seed tracks over the first seconds, in the solver's measurement-list
+% format. Every re-association pass starts its map from these.
 tic;
-a = ev.accept & ev.t >= warmStart & ev.t < warmEnd; 
+seedEnd = t0 + cfg.warm.duration_s;
+a = ev.accept & ev.t >= t0 & ev.t < seedEnd;
 [tracks, slice_times] = track.track_events(ev.t(a), ev.x(a), ev.y(a), ev.flow(a, :), ...
     cfg.data.slice_s, cfg.track);
-fprintf('Warm Start - Tracks Generated: %f [sec]\n', toc);
-
-% Tracks can start and end at different times, so we need to organize them
-% into a common time axis
-tic;
-[obs, track_ids] = track.build_observations(tracks, slice_times);
-fprintf('Warm Start - Observations Built: %f [sec]\n', toc);
-
-wcfg = cfg.warm;
-
-% Times relative to the chosen motion-model origin
-tau = slice_times(:) - cfg.data.start_time_s;
-
-% Convert observations into the solver's measurement-list format
-tic;
+[obs, ~] = track.build_observations(tracks, slice_times);
 [fi, ii, uv, nn] = track.flatten_observations(obs);
-ntracks = size(obs, 2);
-fprintf('Warm Start - Flatten Observations: %f [sec]\n', toc);
+seed = struct('slice_times', slice_times(:), 'fi', fi, 'ii', ii, 'uv', uv, 'nn', nn, ...
+              'ntracks', size(obs, 2));
+fprintf('Seed Tracks Built: %f [sec]\n', toc);
 
-% Starting centre offset and drift
+%% [step] Initialisation
+% Initialisation: 2D tracks in short chunks over the initialisation
+% window, then the motion from a multi-start adjustment with blind
+% rejection rounds (see warm.init_tracks)
 tic;
-[c0, V0] = warm.initial_guess(obs, tau, cam);
-fprintf('Warm Start - Initial Guess Generated: %f [sec]\n', toc);
+initEnd = t0 + cfg.init.window_s;
+rows = track.track_chunks(ev, t0, initEnd, cfg.init.chunk_s, cfg.data.slice_s, cfg.track);
+[trajectory, ~, ~] = warm.init_tracks(rows, cfg, cam);
+trajectory = traj.extrapolate(trajectory, initEnd);
+fprintf('Initialisation - Motion From Tracks: %f [sec] (rate %.3f deg/s)\n', toc, rad2deg(trajectory.omega));
 
-% Wrap the residual function so only the candidate motion remains variable
+%% [step] Re-Association
+% Re-association rounds over the initialisation window: the map rebuilt
+% under the motion, then motion and map refined together
 tic;
-resid = @(a, w, q) warm.twist_residual( ...
-    a, w, q, tau, fi, ii, uv, nn, ntracks, cam, cfg.warm);
+for r = 1:cfg.init.rounds
+    [map, info] = prog.reassociate(ev, trajectory, seed, seedEnd, initEnd, cfg, cam);
+    trajectory  = map.traj;
+    fprintf('  round %d: %d landmarks, normal RMS %.3f px, rate %.3f deg/s\n', ...
+        r, size(map.X, 1), info.rms, rad2deg(trajectory.omega));
+end
+fprintf('Initialisation - Re-association Rounds: %f [sec]\n', toc);
+%-----%
 
-% Scalar score consistent with the objective minimized by sweep_axes
-nll = @(a, w, q) sum( ...
-    warm.cauchy(resid(a, w, q), cfg.warm.cauchy_px).^2);
-
-% Search the candidate axes and starting rates.
-fits = warm.sweep_axes(resid, nll, c0, V0, cfg.warm);
-fprintf('Warm Start - Axes Swept: %f [sec]\n', toc);
-
-% Refine the fit
-tic;
-valid = find(isfinite([fits.cost]));
-assert(~isempty(valid), 'No finite sweep candidates.');
-
-[~, j] = min([fits(valid).cost]);
-bestCoarse = fits(valid(j));
-
-bestRefined = warm.refine_fit(bestCoarse, resid, nll, wcfg);
-fprintf('Warm Start - Fit Refined: %f [sec]\n', toc);
-
-% (Diagnostic, not needed by the pipeline: the cost as a function of the
-% rate can be mapped with warm.rate_profile(bestRefined, resid, nll, wcfg)
-% and plotted with viz.inspect_rate_profile.)
-
-% Initialize the trajectory structure
-trajectory = traj.create_trajectory(cfg.data.start_time_s, cfg.data.end_time_s, ...
-                                    cfg.traj.knot_spacing_s);
-
-% Update the trajectory structure with the warm-start values
-trajectory.a        = bestRefined.a(:);
-trajectory.omega    = bestRefined.w;
-trajectory.c        = bestRefined.q(1:2);
-trajectory.V        = bestRefined.q(3:5) * double(wcfg.free_mean_velocity);
-
-% Evaluate the trajectory at the observation times
-[R_slice, T_slice] = traj.pose(trajectory, slice_times);
-
-% Now we triangulate one object-frame point per warm track at the refine
-% motion
-tic;
-landmarks = geom.triangulate(geom.select(R_slice, fi), T_slice(fi,:), ...
-    ii, uv, nn, ntracks, cfg.warm.tangent_weight, cam);
-
-% We 'pack' the observations as M-by-6 rows [time_s, track_id, u, v, nx,
-% ny]
-observations = [slice_times(fi), ii, uv, nn];
-fprintf('Warm Start - Seed Map Triangulated: %f [sec]\n', toc);
-
-% So far we have beein minimizing the "wrong" error so that we have a
-% starting point for the real optimization - 'geom.triangulate' minimizes
-% the algebraic error, not the pixel reprojection error - now we want to
-% solve for motion AND structure together
-tic;
-free = traj.select_free_parameters(trajectory, true, [], [],...
-    cfg.warm.free_mean_velocity);
-[trajectory, landmarks, adjust_info] = adjust.refine(trajectory, landmarks, ...
-    observations, free, (1:ntracks)', cfg.warm.adjust_iterations, cam, cfg.adjust);
-fprintf('Refinement - Problem Setup Complete: %f [sec]\n', toc);
-
+%% [step] Progressive Loop
 % We can finally start our true looping now -- noting that it is the end of
 % the day and I will definitely need to circle back here
 %% TO BE REVIEWED THOROUGHLY
 
-% First we need to create the map
-map = prog.create_map(trajectory, landmarks, observations);
-
-% Then slice centres tile the recording from the end of the warm start -
-% this is just to "simulate" the streaming of events
+%-----%
+% The map from the initialisation rounds is the starting state; the loop
+% continues from the end of the initialisation window
 dt      = cfg.data.slice_s;
-centers = (warmEnd + dt / 2 : dt : cfg.data.end_time_s - dt / 2)';
+centers = (initEnd + dt / 2 : dt : t1 - dt / 2)';
+%-----%
 [acc_idx, s_first, s_last] = prog.slice_events(ev.t, ev.accept, centers, dt);
 
 % Columns: [time, rate_deg_s, map_count, explained_fraction, matched, new]
 run_log  = nan(numel(centers), 6);
-t_prev   = warmEnd;
+t_prev   = initEnd;
 tic_loop = tic;
 
-% The spline is free to move from the first slice after the warm start
+% The spline is free to move from the first slice after the initialisation
 map.knots_free = true;
 
 % Observation count at the last global adjustment -- the next one runs
 % once the map has grown by cfg.prog.global_growth. Early on, when the map
 % is small, this happens every few slices; later it becomes rare.
 n_at_global = size(map.O, 1);
-
-% The pose as estimated online, at each slice centre, from past data only
-online = struct('t', centers, 'theta', nan(numel(centers), 1), ...
-    'T', nan(numel(centers), 3), 'a', nan(numel(centers), 3), ...
-    'omega', nan(numel(centers), 1));
 
 % Start the loop
 for f = 1:numel(centers)
@@ -207,12 +159,6 @@ for f = 1:numel(centers)
             tc, nnz(map.alive), ginfo.accepted_steps, ginfo.rms, toc(t_g));
     end
 
-    % Online pose at tc, after everything this slice did
-    online.theta(f)    = traj.angle(map.traj, tc);
-    online.T(f, :)     = traj.translation(map.traj, tc);
-    online.a(f, :)     = map.traj.a(:)';
-    online.omega(f)    = map.traj.omega;
-
     % Log and report
     rate_now = traj.rate_deg_s(map.traj, tc);
     run_log(f, :) = [tc, rate_now, nnz(map.alive), info.explained, info.matched, info.n_new];
@@ -226,10 +172,50 @@ for f = 1:numel(centers)
     t_prev = tc;
 end
 
+%% [step] Closure
+%-----%
+% Offline closure: one rate scale for the whole recording from the summed
+% votes of the hidden landmarks, the rotation history scaled by it, the
+% map rebuilt under the corrected motion, and a verification vote. If the
+% verification is still off, the correction is applied once more.
+tic;
+[scale, votes, scales] = prog.closure_vote(map, ev, cfg, cam);
+fprintf('Closure - Vote: scale %+.2f %% (%d attempts)\n', 100 * (scale - 1), nnz(any(isfinite(votes), 2)));
+for pass = 1:cfg.closure.max_passes
+    trajectory       = map.traj;
+    trajectory.omega = scale * trajectory.omega;
+    trajectory.k     = scale * trajectory.k;
+
+    [map, info] = prog.reassociate(ev, trajectory, seed, seedEnd, t1, cfg, cam);
+    [scale, votes] = prog.closure_vote(map, ev, cfg, cam);
+    fprintf('Closure - Pass %d: %d landmarks, normal RMS %.3f px, rate %.3f deg/s, verification %+.2f %%\n', ...
+        pass, size(map.X, 1), info.rms, rad2deg(map.traj.omega), 100 * (scale - 1));
+    if abs(scale - 1) <= cfg.closure.verify_tol
+        break;
+    end
+end
+fprintf('Closure: %f [sec]\n', toc);
+%-----%
+
+%% [step] Refine, Filter & Export
 % Final refinement, packaging, export
 tic;
 final  = prog.final_refinement(map, cfg.data.end_time_s, cam, cfg);
-result = prog.package_result(final, map, run_log, online, cam, cfg);
+
+%-----%
+% Surface filter: landmarks off the local plane of their neighbours are
+% dropped from the result, with their observations
+scale_m = prog.calibrate_scale(final.X(final.keep, :), final.keep, cfg.output);
+[flag, ~] = prog.plane_filter(scale_m.m_per_unit * final.X(final.keep, :), cfg.filter);
+final.keep = final.keep(~flag);
+in_keep    = ismember(final.O(:, 2), final.keep);
+final.O    = final.O(in_keep, :);
+final.dn   = final.dn(in_keep);
+final.revisit = final.revisit(~flag);
+fprintf('Surface Filter: %d of %d landmarks dropped\n', nnz(flag), numel(flag));
+
+result = prog.package_result(final, map, run_log, cam, cfg);
+%-----%
 io.export_result(result, cfg.output.dir);
 fprintf('Final Refinement and Export: %f [sec]\n', toc);
 
@@ -238,4 +224,5 @@ fprintf('Final: %d of %d landmarks kept, %d observations, normal RMS %.3f px, %d
 fprintf('Mean spin %.4f deg/s, axis [%.4f %.4f %.4f]\n', rad2deg(result.traj.omega), result.traj.a);
 fprintf('Scale %.4f m/unit (%s)\n', result.scale.m_per_unit, result.scale.method);
 
+%% [step] Inspect (Figure)
 viz.inspect_reconstruction(result);

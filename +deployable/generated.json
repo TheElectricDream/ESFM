@@ -1,0 +1,11 @@
+{
+  "generated": "2026-10-11T20:10:38",
+  "package": "deployable",
+  "overrides": {
+    "data.hdf5_dir": "'/home/alexandercrain/esfm_work/hdf5/'",
+    "data.hdf5_file": "'recording_20251029_134602.hdf5'",
+    "data.start_time_s": "60.0",
+    "data.end_time_s": "185.0"
+  },
+  "files": 69
+}

@@ -1,7 +1,9 @@
 function export_result(result, folder)
+    %-----%
     %   This function writes the result to disk: the MAT file, the cloud
     %   as PLY in model units and metres, and CSV tables of landmarks,
-    %   refined poses, online poses, and observation residuals.
+    %   refined poses and observation residuals.
+    %-----%
     %
     %   Inputs:
     %       RESULT -> Struct from prog.package_result
@@ -31,13 +33,9 @@ function export_result(result, folder)
         'R22', 'R32', 'R13', 'R23', 'R33', 'angle_rad', 'rate_deg_s'}), ...
         fullfile(folder, 'poses_refined.csv'));
     
-    % Online poses (model units: the gauge can shift slightly between the
-    % online and final estimates, so compare them with care)
-    o = result.online;
-    writetable(array2table([o.t, o.theta, o.T, o.a, o.omega], ...
-        'VariableNames', {'time_s', 'angle_rad', 'tx_model', 'ty_model', 'tz_model', ...
-        'ax', 'ay', 'az', 'omega_rad_s'}), ...
-        fullfile(folder, 'poses_online.csv'));
+    %-----%
+    % (The online pose table was removed with the real-time stage.)
+    %-----%
     
     % Observations, with both ID conventions
     writetable(array2table([result.O(:, 1:2), result.observations(:, 2), ...

@@ -1,13 +1,16 @@
-function result = package_result(final, map, run_log, online, cam, cfg)
+%-----%
+function result = package_result(final, map, run_log, cam, cfg)
+%-----%
+    %-----%
     %   This function assembles the final result: the filtered cloud, its
     %   observations (with both original and compact IDs), the refined
-    %   and online trajectories, diagnostics, and the metric scale.
+    %   trajectory, diagnostics, and the metric scale.
+    %-----%
     %
     %   Inputs:
     %       FINAL -> Struct from prog.final_refinement
     %       MAP -> Struct, reconstruction state after the loop
-    %       RUN_LOG -> [F, 7], per-slice log from the loop
-    %       ONLINE -> Struct, online pose at each slice centre
+    %       RUN_LOG -> [F, 6], per-slice log from the loop
     %       CAM -> Struct, camera model
     %       CFG -> Struct, full configuration
     %
@@ -31,7 +34,6 @@ function result = package_result(final, map, run_log, online, cam, cfg)
     result.normal_rms_px      = sqrt(mean(final.dn.^2));
     result.revisited          = final.revisit;
     result.log                = run_log;
-    result.online             = online;
     result.camera             = cam;
     result.config             = cfg;
     

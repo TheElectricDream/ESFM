@@ -44,6 +44,19 @@ function [prob] = setup_problem(trajectory, landmarks, observations, ...
     prob.K               = trajectory.K;
     prob.h               = trajectory.h;
     prob.n_traj          = 8 + 4*prob.K;
+    assert(all(ismember(free_parameters, 1:prob.n_traj)) && ...
+        numel(unique(free_parameters)) == numel(free_parameters), ...
+        'Free parameters must be unique trajectory indices.');
+    [prob.b0_idx, prob.b0_val] = traj.spline_basis(trajectory,trajectory.t0);
+    [prob.b_idx, prob.b_val] = traj.spline_basis(trajectory,prob.t);
+    prob.support_end = 0;
+    if prob.M > 0, prob.support_end = max(prob.b_idx,[],'all'); end
+    % Requested horizon may extend beyond the last usable observation.
+    % Freeze unsupported spline columns rather than damping empty columns.
+    angular_future=free_parameters>8+prob.support_end & free_parameters<=8+prob.K;
+    translation_future=free_parameters>8+prob.K+3*prob.support_end;
+    free_parameters=free_parameters(~angular_future & ~translation_future);
+
     prob.free_parameters = free_parameters(:);
     prob.free_landmarks  = free_landmarks(:);
     prob.n_free_motion   = numel(prob.free_parameters);
@@ -62,9 +75,6 @@ function [prob] = setup_problem(trajectory, landmarks, observations, ...
     % normal matrix being singular
     assert(all(prob.ids >= 1 & prob.ids <= prob.N & prob.ids == round(prob.ids)), ...
         'Observation landmark IDs must index rows of LANDMARKS.');
-    assert(all(ismember(prob.free_parameters, 1:prob.n_traj)) && ...
-        numel(unique(prob.free_parameters)) == prob.n_free_motion, ...
-        'Free parameters must be unique trajectory indices.');
     assert(all(ismember(prob.free_landmarks, 1:prob.N)) && ...
         numel(unique(prob.free_landmarks)) == numel(prob.free_landmarks), ...
         'Free landmarks must be unique landmark indices.');
@@ -92,9 +102,13 @@ function [prob] = setup_problem(trajectory, landmarks, observations, ...
     % The times for the knots don't change during an optimization run, only
     % the coefficients change - so we can calculate the spline indices and
     % weights once for each observation time
-    [prob.b0_idx, prob.b0_val] = traj.spline_basis(trajectory, trajectory.t0);
-    [prob.b_idx, prob.b_val]   = traj.spline_basis(trajectory, prob.t);
     prob.tau                   = prob.t - trajectory.t0;
+    prob.velocity_weight = acfg.velocity_weight;
+    % First differences are the derivative spline's control coefficients.
+    % Adding V penalizes physical velocity, regardless of the V/m split.
+    prob.D_velocity = spdiags([-ones(prob.K,1), ones(prob.K,1)], [0 1], prob.K, prob.K)/prob.h;
+    prob.D_velocity(prob.K,:)=0;
+    prob.b0_derivative = [-0.5 0 0.5 0]/prob.h;
 
     % The residual vector is now laid out in the following order for
     % computational efficiency
@@ -102,13 +116,12 @@ function [prob] = setup_problem(trajectory, landmarks, observations, ...
     %   K-2     angular curvature (second difference of k)
     %   3(K-2)  translation curvature (second difference of m)
     %   K       angular pull toward zero
-    %   3K      translation pull toward zero
+    %   3K      total translation velocity control coefficients
     %   1       angular correction at t0 is zero (gauge)
     %   3       translation correction at t0 is zero (gauge)
+    %   3       translation correction derivative at t0 is zero (gauge)
     %   1       landmark centroid along the rotation axis
     prob.n_img = 2*prob.M;
-    prob.n_res = prob.n_img + (prob.K-2) + 3*(prob.K-2) + prob.K +...
-                    3*prob.K + 1 + 3 + 1;
 
     % Finally we complete the structure by adding in the trajectory axis
     % and the camera intrinsics
@@ -123,8 +136,6 @@ function [prob] = setup_problem(trajectory, landmarks, observations, ...
 
     % Store the depth violation parameters
     prob.n_depth = prob.M;
-    prob.n_res   = prob.n_img + (prob.K - 2) + 3 * (prob.K - 2) ...
-        + prob.K + 3 * prob.K + 1 + 3 + 1 + prob.n_depth;
 
     % Store the prior weights
     prob.lambda_rotation    = acfg.lambda_rotation;
@@ -132,8 +143,19 @@ function [prob] = setup_problem(trajectory, landmarks, observations, ...
     prob.pull_fraction      = acfg.pull_fraction;
     prob.gauge_weight       = acfg.gauge_weight;
     prob.centroid_weight    = acfg.centroid_weight;
-    prob.n_prior            = 4 * (prob.K - 2) + 4 * prob.K + 4 + 1;
+    prob.n_prior            = 4 * (prob.K - 2) + 4 * prob.K + 7 + 1;
     prob.n_res              = prob.n_img + prob.n_prior + prob.n_depth;
+
+    %-----%
+    % Block layout for the Schur solver (adjust.schur_setup): the spline
+    % segment of every observation (its four knots are b_idx(:, 1:4), so
+    % rows of one segment share the same motion columns) and the free-
+    % landmark slot of every landmark (0 when the landmark is frozen)
+    prob.seg              = prob.b_idx(:, 1);
+    prob.lm_slot          = zeros(prob.N, 1);
+    prob.lm_slot(prob.free_landmarks) = 1:numel(prob.free_landmarks);
+    prob.n_free_landmarks = numel(prob.free_landmarks);
+    %-----%
 
 
 

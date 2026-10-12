@@ -1,226 +1,210 @@
+%-----%
 function [tracks, slice_times] = track_events(t, x, y, flow, slice_dt, tcfg)
-
-    %   This function takes in a continuous stream of events and
-    %   discretizes it into chunks. Active tracks for features are used to
-    %   predict where events should be based on their current velocity. At
-    %   the predicted location, unclaimed events are claimed and their
-    %   states are updated using a fixed-gain Alpha-=Beta filter. Unclaimed
-    %   events are then used to seed new tracks.
+    %   This function turns a stream of accepted events into 2D feature
+    %   tracks. Events are grouped into short time slices and warped to
+    %   the slice centre with their normal flow, so every slice shows
+    %   sharp edges. Each live track predicts where its edge fragment is,
+    %   claims the warped events inside a small disc that also move the
+    %   way the track moves, and updates a Kalman filter on position and
+    %   velocity. The claimed events give two measurements: their centroid
+    %   (position) and their mean normal flow (velocity across the edge).
+    %   Unclaimed events seed new tracks; a track lost for a short while
+    %   can be resumed by a seed that appears where it was heading.
     %
     %   Inputs:
-    %       T -> [N, 1], timestamps for accepted events
+    %       T -> [N, 1], timestamps of accepted events [s]
     %       X -> [N, 1], x-location of accepted events [px]
     %       Y -> [N, 1], y-location of accepted events [px]
-    %       FLOW -> [N, 2], normal optical flow of accepted events [px/s]
-    %       SLICE_DT -> Scaler, duration of time slices [s]
-    %       TCFG -> Struct, contains tracking related parameters
+    %       FLOW -> [N, 2], normal flow of accepted events [px/s]
+    %       SLICE_DT -> Scalar, duration of a time slice [s]
+    %       TCFG -> Struct, tracker parameters (cfg.track)
     %
     %   Outputs:
-    %       TRACKS -> {1, K}, Cell Array where each cell holds the history
-    %       matrix of a track which has survived the minimum length
-    %       threshold -- Each matrix is [M, 5] and contains [time, x, y,
-    %       normal_x, normal_y]
+    %       TRACKS -> {1, K} cell, history of every track longer than
+    %              tcfg.min_length; each history is [M, 5] with rows
+    %              [time, x, y, normal_x, normal_y]
+    %       SLICE_TIMES -> [F, 1], centre time of every slice [s]
     %
-    %   Novelty: As far as I have found in literature, coupling normal flow
-    %   to align events within short time slices and attaching an
-    %   edge-normal direction to each tracked observation is novel and
-    %   allows me to place normal constraints. This is not specific to
-    %   event cameras, but combining event-level motion with normal tracks
-    %   IS novel.
+    %   Replaces the alpha-beta tracker of the same name (kept in
+    %   _removed_2026-10-10). The two ingredients that matter, found by
+    %   ablation against motion capture: the direction gate, and the normal
+    %   flow of the claimed events used as a velocity measurement.
 
-    % First we have to prepare the incoming events by sorting them
-    % according to their timestamps
-    [sortedT, sortIdx]  = sort(t);
-    sortedX             = x(sortIdx);
-    sortedY             = y(sortIdx);
-    sortedFlow          = flow(sortIdx, :);
+    % Sort the events in time and define the slices
+    [t, order] = sort(t);
+    x    = x(order);
+    y    = y(order);
+    flow = flow(order, :);
 
-    % Working on a single event alone is obviously ideal, but I'm not quite
-    % there yet. But I also do not want to work on event frames. So, we
-    % will define 'chunks' of time and we will look at the events within a
-    % given chunk
-    edges       = sortedT(1) : slice_dt : sortedT(end) + slice_dt;
-    slice_times = edges(1:end-1).';
-    slice_times = slice_times + slice_dt / 2;
-    bounds      = [track.find_slice_starts(sortedT, edges), numel(sortedT)+1];
+    edges       = t(1) : slice_dt : t(end) + slice_dt;
+    slice_times = edges(1:end-1).' + slice_dt / 2;
+    bounds      = [track.find_slice_starts(t, edges), numel(t) + 1];
 
-    % We also need to define some empty storage arrays up front -- 'live'
-    % and 'done', which will contain any tracks currently following edges
-    % and any tracks that are done (respectively)
-    live = struct('x', {}, 'y', {}, 'vx', {}, 'vy', {},...
-        't', {}, 'hist', {}, 'miss', {});
-    done = struct('x', {}, 'y', {}, 'vx', {}, 'vy', {},...
-        't', {}, 'hist', {}, 'miss', {});
+    % Kalman model: constant velocity over one slice, with an acceleration
+    % noise of tcfg.q_acc
+    F = [1 0 slice_dt 0; 0 1 0 slice_dt; 0 0 1 0; 0 0 0 1];
+    q = tcfg.q_acc^2;
+    d = slice_dt;
+    Q = q * [d^4/4 0 d^3/2 0; 0 d^4/4 0 d^3/2; d^3/2 0 d^2 0; 0 d^3/2 0 d^2];
 
-    % Now we need to start our loop and step through one time-slice at a
-    % time
+    blank   = struct('p', [], 'v', [], 'P', [], 'n', [], 't', [], 'hist', [], 'miss', 0);
+    live    = blank([]);
+    done    = blank([]);
+    dormant = blank([]);
+
     for k = 1:numel(edges) - 1
-        
-        % Grab the lower and upper bounds of the current chunk, and then
-        % grab the middle time for the slice (tc)
         lo = bounds(k);
         hi = bounds(k+1) - 1;
         tc = slice_times(k);
+        if hi < lo
+            continue;
+        end
 
-        % Grabbing chunks of data as above results in blur along fast
-        % moving edges, which is bad for reconstruction
+        % Events of this slice, warped to the slice centre
+        eX = x(lo:hi);
+        eY = y(lo:hi);
+        eF = flow(lo:hi, :);
+        eT = t(lo:hi);
+        W  = [eX - eF(:,1) .* (eT - tc), eY - eF(:,2) .* (eT - tc)];
+        D  = geom.unit_rows(eF);
+        used = false(numel(eX), 1);
 
-        % This is where the flow calculation comes into play, as we can use
-        % the flow to estimate where each event SHOULD be based on it's
-        % velocity -- first we extract the events from the sorted arrays
-        eX = sortedX(lo:hi);
-        eY = sortedY(lo:hi);
-        eF = sortedFlow(lo:hi, :);
-        eT = sortedT(lo:hi);
-
-        % Then we MOVE the events to where they SHOULD be at the middle
-        % time step 'tc'
-        eX_warped = eX - eF(:, 1) .* (eT - tc);
-        eY_warped = eY - eF(:, 2) .* (eT - tc);
-        used      = false(numel(eX), 1);
-
-        % Now we want to predict where a track will go next based on it's
-        % current speed -- for all currently active tracks, we check how
-        % much time has passed since they were last updated. Basically, if
-        % we assume that a track is moving at it's last known velocity, we
-        % want to predict where it should be NOW (px, py)
+        % Predict and update the live tracks, longest first
         if ~isempty(live)
-            
-            dTp = tc - [live.t]';  % Calculate last update time
-            pX  = [live.x]' + [live.vx]' .* dTp;
-            pY  = [live.y]' + [live.vy]' .* dTp;
+            ages = arrayfun(@(s) size(s.hist, 1), live);
+            [~, order] = sort(ages, 'descend');
 
-            % Using where we think the track should be, we draw a circle
-            % around that location and we extract all new events in that
-            % range
-            nbs = rangesearch([eX_warped, eY_warped], [pX, pY],...
-                tcfg.gate_px);
-
-            % Next, we loop over all the live tracks and check if we have
-            % sufficient unclaimed events within the circle -- if we do,
-            % then we calculate the 'center of mass' of those events and
-            % consider that to be the new 'measurement' for the track
+            pred = zeros(numel(live), 2);
             for i = 1:numel(live)
-                
-                % Here, 'nb' contains the candidate events in [eX, eY]
-                % within 'gate_px' of [pX, pY]
-                nb = nbs{i};
+                st = F * [live(i).p(:); live(i).v(:)];
+                live(i).p = st(1:2)';
+                live(i).v = st(3:4)';
+                live(i).P = F * live(i).P * F' + Q;
+                live(i).t = tc;
+                pred(i, :) = st(1:2)';
+            end
+
+            nbs = rangesearch(W, pred, tcfg.disc_px);
+            for i = order
+                nb = nbs{i}(:);
                 nb = nb(~used(nb));
-                
-                if numel(nb) >= tcfg.min_events
-                    
-                    % Mark the events as claimed
-                    used(nb) = true;
-
-                    % Calculate the average position for the claimed events
-                    zX = mean(eX_warped(nb));
-                    zY = mean(eY_warped(nb));
-
-                    % Use an Alpha-Beta tracker to calculate the next live
-                    % measurement -- This COULD be a Kalman Filter here,
-                    % but for now this is easier. It assumes that the
-                    % system can be modelled a simple two-state model
-                    live(i).vx = live(i).vx +...
-                        tcfg.gain_velocity * (zX - pX(i))/dTp(i);
-                    live(i).vy = live(i).vy +...
-                        tcfg.gain_velocity * (zY - pY(i))/dTp(i);
-                    live(i).x = pX(i) + tcfg.gain_position*(zX - pX(i));
-                    live(i).y = pY(i) + tcfg.gain_position*(zY - pY(i));
-
-                    % Log the time stamp of this chunk (the middle time)
-                    live(i).t = tc;
-                    
-                    % Normalize the edge direction vector so that it has a
-                    % length of '1'
-                    normVec = mean(eF(nb, :), 1);
-                    normVec = normVec / max(norm(normVec), 1e-9);
-
-                    % Save the updated state to the tracks history
-                    live(i).hist(end + 1, :) = [tc, live(i).x, ...
-                        live(i).y, normVec];
-                    live(i).miss = 0;
-
-                else
-
-                    % If a track failed to find enough events to meet the
-                    % minimum we set, then we increment the miss tracker
+                if numel(nb) < tcfg.min_events
                     live(i).miss = live(i).miss + 1;
-
+                    continue;
                 end
 
+                % Own events: inside the disc and moving the track's way
+                n   = live(i).n;
+                own = D(nb, :) * n' > tcfg.cos_edge;
+                if nnz(own) < tcfg.min_events
+                    live(i).miss = live(i).miss + 1;
+                    continue;
+                end
+                io     = nb(own);
+                n_meas = geom.unit_rows(mean(D(io, :), 1));
+                pe     = W(io, :) - pred(i, :);
+
+                % Measurements: the centroid offset (both directions) and
+                % the normal flow as the velocity across the edge
+                zv    = mean(eF(io, :) * n_meas');
+                sig_v = max(tcfg.sigma_v_floor, tcfg.sigma_v_rel * abs(zv));
+                H  = [1 0 0 0; 0 1 0 0; 0 0 n_meas];
+                R  = diag([tcfg.sigma_n^2, tcfg.sigma_n^2, sig_v^2]);
+                zz = [mean(pe, 1)'; zv - live(i).v * n_meas'];
+
+                Pp = live(i).P;
+                S  = H * Pp * H' + R;
+                K  = Pp * H' / S;
+                st = [pred(i, :)'; live(i).v(:)] + K * zz;
+                Pp = (eye(4) - K * H) * Pp;
+                Pp = (Pp + Pp') / 2;
+
+                used(io)  = true;
+                live(i).p = st(1:2)';
+                live(i).v = st(3:4)';
+                live(i).P = Pp;
+                live(i).n = n_meas;
+                live(i).t = tc;
+                live(i).hist(end+1, :) = [tc, st(1:2)', n_meas];
+                live(i).miss = 0;
             end
 
-            % If a track has missed more then our 'max_miss' parameter,
-            % we consider it to be a 'dead' track and we remove it
-            retire  = [live.miss] > tcfg.max_miss;
-
-            % Then, we update the 'done' array and the 'live' arrays
-            done    = [done, live(retire)]; %#ok<AGROW>
-            live    = live(~retire);
-
+            % Retire tracks unseen for too long; long ones stay dormant for
+            % a while so a compatible seed can resume them
+            retire = [live.miss] > tcfg.max_miss;
+            if any(retire)
+                r    = live(retire);
+                long = arrayfun(@(s) size(s.hist, 1), r) >= tcfg.min_length;
+                done    = [done, r(~long)];    %#ok<AGROW>
+                dormant = [dormant, r(long)];  %#ok<AGROW>
+                live    = live(~retire);
+            end
+            if ~isempty(dormant)
+                expired = [dormant.t] < tc - tcfg.dormant_s - tcfg.max_miss * slice_dt;
+                done    = [done, dormant(expired)]; %#ok<AGROW>
+                dormant = dormant(~expired);
+            end
         end
 
-        % Once all of the currently live tracks have claimed events,
-        % there will be some remaining unclaimed (in fact, on startup
-        % there would be no live tracks so the code jumps right to
-        % here) -- we want to use these to seed new tracks
-        unclaimed = find(~used);
-            
-        if ~isempty(unclaimed)
-            
-            % All this code is doing is dividing the 'frame' into a
-            % grid cell using a hasing trick (y * 10000 + x)
-            key = floor(eY_warped(unclaimed) / tcfg.seed_cell_px)...
-                * 10000 + floor(eX_warped(unclaimed) / tcfg.seed_cell_px);
+        % Seed new tracks from the unclaimed events, one per grid cell
+        % whose events share one flow direction
+        un = find(~used);
+        if ~isempty(un)
+            key = floor(W(un, 2) / tcfg.seed_cell_px) * 10000 + floor(W(un, 1) / tcfg.seed_cell_px);
             [~, ~, inv] = unique(key);
+            cnt = accumarray(inv, 1);
+            for c = find(cnt >= tcfg.min_events)'
+                ids  = un(inv == c);
+                mdir = mean(D(ids, :), 1);
+                coh  = norm(mdir);
+                if coh < tcfg.min_coherence
+                    continue;
+                end
+                n  = mdir / coh;
+                tg = [-n(2), n(1)];
+                p0 = mean(W(ids, :), 1);
+                v0 = mean(eF(ids, :), 1);
+                Rnt  = [n; tg];
+                Ppos = Rnt' * diag([tcfg.sigma_n^2, tcfg.seed_sigma_t^2]) * Rnt;
+                P0   = blkdiag(Ppos, tcfg.seed_sigma_v^2 * eye(2));
 
-            % Then, we use 'accumarray' to count the number of
-            % unclaimed events in each grid cell
-            countUnclaimed = accumarray(inv, 1);
-
-            % If a grid cell has enough remaining events clumped
-            % together, we can infer that there might be a new edge
-            % which can be added to the live pool
-            for c = find(countUnclaimed >= tcfg.min_events)'
-
-                % Extract the unclaimed event in the current grid cell
-                currentUnclaimedEvents = unclaimed(inv == c);
-
-                % Calculate the edge normal and normalize it to '1'
-                normVec = mean(eF(currentUnclaimedEvents, :), 1);
-                normVec = normVec / max(norm(normVec), 1e-9);
-
-                % Update the 'live' track structure
-                live(end+1) = struct(...
-                    'x', mean(eX_warped(currentUnclaimedEvents)), ...
-                    'y', mean(eY_warped(currentUnclaimedEvents)), ...
-                    'vx', mean(eF(currentUnclaimedEvents, 1)), ...
-                    'vy', mean(eF(currentUnclaimedEvents, 2)), ...
-                    't', tc, ...
-                    'hist', [tc, mean(eX_warped(currentUnclaimedEvents)), ...
-                    mean(eY_warped(currentUnclaimedEvents)), normVec], ...
-                    'miss', 0); %#ok<AGROW>
-
+                % Resume a dormant track that predicts here with the same
+                % edge, otherwise start a new one
+                resumed = false;
+                if ~isempty(dormant)
+                    dp  = reshape([dormant.p], 2, [])';
+                    dv  = reshape([dormant.v], 2, [])';
+                    dn  = reshape([dormant.n], 2, [])';
+                    dtd = tc - [dormant.t]';
+                    pp  = dp + dv .* dtd;
+                    ok  = vecnorm(pp - p0, 2, 2) < tcfg.dormant_gate_px & dn * n' > tcfg.dormant_cos;
+                    if any(ok)
+                        j = find(ok);
+                        [~, jj] = min(vecnorm(pp(j, :) - p0, 2, 2));
+                        j = j(jj);
+                        s = dormant(j);
+                        dormant(j) = [];
+                        s.p = p0; s.v = v0; s.P = P0; s.n = n; s.t = tc; s.miss = 0;
+                        s.hist(end+1, :) = [tc, p0, n];
+                        live(end+1) = s; %#ok<AGROW>
+                        resumed = true;
+                    end
+                end
+                if ~resumed
+                    s = blank;
+                    s.p = p0; s.v = v0; s.P = P0; s.n = n; s.t = tc; s.miss = 0;
+                    s.hist = [tc, p0, n];
+                    live(end+1) = s; %#ok<AGROW>
+                end
+                used(ids) = true;
             end
-
         end
-              
-    end  % END of the TIME-SLICE LOOP
+    end
 
-    % After going through all the time-slices, we have some cleanup to do;
-    % first we move all remaining 'live' tracks to 'done'
-    done = [done, live]; 
-
-    % Next, we find the length for all tracks by summing up their hist
-    % entries
-    trackLengths = arrayfun(@(tr) size(tr.hist, 1), done);
-
-    % We only want to keep tracks which are long enough, so we use
-    % 'min_length' to filter out short tracks
-    validTracks = done(trackLengths >= tcfg.min_length);
-
-    % Lastly, extract only the history matrices and return those as
-    % functions outputs
-    tracks = {validTracks.hist};
-
+    % Every track that lasted long enough, whatever state it ended in
+    done   = [done, dormant, live];
+    lens   = arrayfun(@(s) size(s.hist, 1), done);
+    done   = done(lens >= tcfg.min_length);
+    tracks = {done.hist};
 end
+%-----%

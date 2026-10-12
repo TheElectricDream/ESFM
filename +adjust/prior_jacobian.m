@@ -38,20 +38,26 @@ function [rows, cols, vals] = prior_jacobian(prob, tr, X)
         for d = 1:3
             rows{end+1} = row + (K-2) + 3 * (j - 1) + d;                %#ok<AGROW>
             cols{end+1} = 8 + K + 3 * (j + q - 2) + d;                  %#ok<AGROW>
-            vals{end+1} = repmat(stencil(q) * w_trans / h^2, K-2, 1);   %#ok<AGROW>
+            vals{end+1} = (j+2 <= prob.support_end) * stencil(q) * w_trans / h^2;   %#ok<AGROW>
         end
     end
 
-    % Pull rows - one diagonal entry per coefficient
+    % Angular pull rows, then total velocity rows (V plus first differences).
     row = row + 4 * (K - 2);
     j   = (1:K)';
     rows{end+1} = row + j;                                              
     cols{end+1} = 8 + j;                                                
     vals{end+1} = repmat(prob.pull_fraction * w_rot, K, 1);             
-    for d = 1:3
-        rows{end+1} = row + K + 3 * (j - 1) + d;                        %#ok<AGROW>
-        cols{end+1} = 8 + K + 3 * (j - 1) + d;                          %#ok<AGROW>
-        vals{end+1} = repmat(prob.pull_fraction * w_trans, K, 1);       %#ok<AGROW>
+    [vr,vc,vv]=find(prob.D_velocity);
+    sel=vr<prob.support_end; vr=vr(sel); vc=vc(sel); vv=vv(sel);
+    for d=1:3
+        rows{end+1}=row+K+3*(vr-1)+d;
+        cols{end+1}=8+K+3*(vc-1)+d;
+        vals{end+1}=prob.velocity_weight*vv;
+        active=(1:prob.support_end-1)';
+        rows{end+1}=row+K+3*(active-1)+d;
+        cols{end+1}=repmat(5+d,prob.support_end-1,1);
+        vals{end+1}=repmat(prob.velocity_weight,prob.support_end-1,1);
     end
 
     % Gauge rows - the spline weights at t0 on the four active knots
@@ -65,11 +71,16 @@ function [rows, cols, vals] = prior_jacobian(prob, tr, X)
         vals{end+1} = prob.gauge_weight * prob.b0_val';                 %#ok<AGROW>
     end
 
-    % Centroid row - derivative with respect to each landmark is
-    % c * a / N, using the CURRENT axis
-    row  = row + 4;
+    % Initial correction-velocity gauge: derivative of the cubic basis.
+    for d=1:3
+        rows{end+1}=repmat(row+4+d,4,1);
+        cols{end+1}=8+K+3*(prob.b0_idx'-1)+d;
+        vals{end+1}=prob.gauge_weight*prob.b0_derivative';
+    end
+    row  = row + 7;
     a    = tr.a(:);
     Xbar = mean(X, 1)';
+    % Centroid row: derivative with respect to each landmark is c*a/N.
     for d = 1:3
         rows{end+1} = repmat(row + 1, N, 1);                            %#ok<AGROW>
         cols{end+1} = prob.n_traj + 3 * (0:N-1)' + d;                   %#ok<AGROW>

@@ -8,7 +8,8 @@ function [accept, flow] = compute_baseline(ev, scfg, time_range)
     %   and performs no selection between grids. Keeps the same polarity
     %   grouping, normalized covariance fit, normal-flow conversion, and
     %   event-count, time-normal, and planarity thresholds as compute.
-    %   scfg.two_offset_grids and scfg.min_warped_support are unused.
+    %   scfg.stride_px, scfg.two_offset_grids, and
+    %   scfg.min_warped_support are unused.
     %
     %   time_range is [start_s end_s), using the original timestamps.
     %   Supporting events outside that range complete the fitted cells.

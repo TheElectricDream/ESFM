@@ -1,0 +1,7 @@
+# Event Studio's Python packages. setup_env.py installs them into the Studio's
+# own environment (one per machine and Python version), so nothing has to be
+# installed by hand. The optional ones enable AEDAT4 files and the live camera.
+numpy>=1.24
+h5py>=3.8
+dv-processing>=1.7  # optional
+paramiko>=3.0  # optional: the remote camera (a DVXplorer on a Jetson Orin, over SSH)

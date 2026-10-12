@@ -35,14 +35,25 @@ function [map, info] = step(map, slice, tc, cfg, cam)
     % 1. Warp events to tc -- independent of the motion, so done once
     [warped, direction] = prog.warp_events(slice, tc);
 
+    %-----%
+    % One search tree over the warped events serves both association
+    % passes (2026-10-11)
+    searcher = [];
+    if ~isempty(warped)
+        searcher = KDTreeSearcher(warped);
+    end
+    %-----%
+
     % 2-3. Associate, correct the recent motion, and associate again with
     % the corrected motion
     for pass = 1:2
         pred      = prog.predict(map, tc, cam, cfg);
         nrm_k     = map.nrm(pred.ids, :);
         ambiguous = prog.find_ambiguous(pred, nrm_k, cfg);
+        %-----%
         claims    = prog.associate(pred, warped, direction, slice, nrm_k, ...
-                                   map.nobs(pred.ids), ambiguous, cfg);
+                                   map.nobs(pred.ids), ambiguous, cfg, searcher);
+        %-----%
 
         % Store the latest normal of every landmark that claimed --
         % equivalent to gold's in-loop update, since each landmark claims

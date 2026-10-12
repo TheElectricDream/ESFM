@@ -1,10 +1,11 @@
 function [accept, flow] = compute(ev, scfg, time_range)
     
     %   Takes the per-cell plane fitting code and wraps it into the
-    %   pipeline. We run the fitting twice on grids that are offset by half
-    %   a cell, so that if we have an edge on the boundary of a cell it can
-    %   be correctly identified. For both fits we only keep the one that is
-    %   more "planar" -- i.e. the one that is more sheet-like. When
+    %   pipeline. Spatial cells retain their cell_px width but overlap at
+    %   stride_px spacing in both image axes. Each shifted grid is fitted
+    %   separately, and each event keeps the most planar valid estimate
+    %   from its containing cells. With two_offset_grids, we also fit a
+    %   half-window-shifted temporal grid. When
     %   polarity is included, it is treated as two different planes. Then
     %   we have a series of criteria to filter out events and return the
     %   normal-flow estimation.
@@ -12,10 +13,13 @@ function [accept, flow] = compute(ev, scfg, time_range)
     %   Inputs: 
     %       EV -> Struct, contains event stream
     %       SCFG -> Struct, contains parameters for surface estimation
+    %           stride_px must divide cell_px and lie in (0, cell_px].
+    %           Missing stride_px, or stride_px = cell_px, preserves the
+    %           original one/two-grid behavior.
     %
     %   Outputs:
     %       ACCEPT -> [N, 1], true if event is on a clean moving plane
-    %       FLOW -> [N, 1], normal flow in pixels/s and zero otherwise
+    %       FLOW -> [N, 2], normal flow in pixels/s and zero otherwise
 
     % Count up the total number of events being analysed in this pass
     N = numel(ev.t);
@@ -60,17 +64,33 @@ function [accept, flow] = compute(ev, scfg, time_range)
         groups = {true(N, 1)};
     end
 
-    % Define the desired offsets (currently hardcoded, but maybe I will
-    % move this to the config file)
-    offsets = [0 0 0];
+    % Missing stride preserves callers using the original configuration.
+    stride_px = scfg.cell_px;
+    if isfield(scfg, 'stride_px')
+        stride_px = scfg.stride_px;
+    end
+    validateattributes(scfg.cell_px, {'numeric'}, ...
+        {'scalar', 'real', 'finite', 'positive'});
+    validateattributes(stride_px, {'numeric'}, ...
+        {'scalar', 'real', 'finite', 'positive', '<=', scfg.cell_px});
+    phases = scfg.cell_px / stride_px;
+    assert(abs(phases - round(phases)) <= 32 * eps(phases), ...
+        'surface:InvalidStride', 'stride_px must divide cell_px exactly.');
 
-    % In the config file the user can choose to use several offset grids -- 
-    % basically, we are shifting every grid box bound by some offset in all
-    % axes. This minimizes the odds of a pixel falling on a gridline and
-    % being split between two grids.
+    % Retain the original grid offsets when spatial overlap is disabled.
+    offsets = [0 0 0];
     if scfg.two_offset_grids
         offsets = [offsets; scfg.cell_px / 2, scfg.cell_px / 2,...
             scfg.cell_s / 2];
+    end
+
+    if round(phases) > 1
+        % Interleaved full-size grids form a lattice of overlapping cells.
+        % Take every x/y combination; diagonal shifts alone leave gaps.
+        spatial_offsets = (0:round(phases)-1) * stride_px;
+        temporal_offsets = offsets(:, 3);
+        [ox, oy, ot] = ndgrid(spatial_offsets, spatial_offsets, temporal_offsets);
+        offsets = [ox(:), oy(:), ot(:)];
     end
 
     % Start looking through all of the polarity groups
@@ -82,9 +102,8 @@ function [accept, flow] = compute(ev, scfg, time_range)
             continue;
         end
 
-        % Initialize empty arrays to handle the split offset case --
-        % basically we check both cases of offset and pick the best one
-        % going forward
+        % Rank all containing cells, requiring each candidate to pass the
+        % original geometric and per-event warped-support checks.
         best_ok = false(numel(idx), 1);
         best_planarity = inf(numel(idx), 1);
         best_vel = zeros(numel(idx), 2);

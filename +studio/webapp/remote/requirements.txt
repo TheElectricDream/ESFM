@@ -1,0 +1,4 @@
+# Packages the remote camera agent needs on the computer the DVXplorer is
+# plugged into (e.g. a Jetson Orin); Event Studio installs them there.
+numpy>=1.24
+dv-processing>=1.7

@@ -18,13 +18,18 @@ function [R, T, theta] = observation_pose(prob, tr)
 
     % First we calculate the rotation angle, which is the constant-rate
     % baseline angle plus the spline correction
-    theta = tr.omega * prob.tau + sum(prob.b_val .* tr.k(prob.b_idx), 2);
+    % MATLAB preserves the source vector's orientation when both source
+    % and indices are vectors (notably a single observation's 1-by-4
+    % indices). Restore M-by-4 explicitly before multiplying weights.
+    angular = reshape(tr.k(prob.b_idx), size(prob.b_idx));
+    theta = tr.omega * prob.tau + sum(prob.b_val .* angular, 2);
 
     % Next we apply the translation correct going one axis at a time
     correction = zeros(prob.M, 3);
     for d = 1:3
         md = tr.m(:, d);
-        correction(:, d) = sum(prob.b_val .* md(prob.b_idx), 2);
+        active = reshape(md(prob.b_idx), size(prob.b_idx));
+        correction(:, d) = sum(prob.b_val .* active, 2);
     end
 
     % Combine the baseline translation with the spline correction

@@ -43,9 +43,13 @@ function map = create_map(trajectory, landmarks, observations)
         map.nrm(i, :) = observations(rows_i(j), 5:6);
     end
     
-    % No 2D candidates yet; times stored in seconds, not slice indices
+    %-----%
+    % No 2D candidates yet; times stored in seconds, not slice indices.
+    % Each candidate also carries its edge normal n and the covariance P of
+    % its Kalman state (see prog.seed_candidates)
     map.cand = struct('x', {}, 'y', {}, 'vx', {}, 'vy', {}, ...
-        't', {}, 'hist', {}, 'miss', {});
+        't', {}, 'hist', {}, 'miss', {}, 'n', {}, 'P', {});
+    %-----%
     
     map.knots_free = false;
     map.created_s  = nan(N, 1);

@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Event Studio</title>
+  <link rel="icon" type="image/svg+xml" href="/logo.svg">
+  <link rel="stylesheet" href="/vendor/codemirror/codemirror.min.css">
+  <link rel="stylesheet" href="/vendor/codemirror/show-hint.min.css">
+  <link rel="stylesheet" href="/vendor/codemirror/dialog.min.css">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/vendor/codemirror/codemirror.min.js"></script>
+  <script src="/vendor/codemirror/octave.min.js"></script>
+  <script src="/vendor/codemirror/show-hint.min.js"></script>
+  <script src="/vendor/codemirror/matchbrackets.min.js"></script>
+  <script src="/vendor/codemirror/closebrackets.min.js"></script>
+  <script src="/vendor/codemirror/active-line.min.js"></script>
+  <script src="/vendor/codemirror/searchcursor.min.js"></script>
+  <script src="/vendor/codemirror/dialog.min.js"></script>
+  <script src="/vendor/codemirror/search.min.js"></script>
+  <script src="/vendor/codemirror/jump-to-line.min.js"></script>
+  <script src="/vendor/codemirror/comment.min.js"></script>
+  <script type="importmap">{ "imports": { "three": "/vendor/three/three.module.min.js" } }</script>
+  <script type="module" src="/js/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand" title="Event Studio: a front end for the PoseFromEvents pipeline">
+      <img src="/logo.svg" alt="" class="brand-logo">
+      <div>
+        <h1>Event Studio</h1>
+        <p id="projectLine">Connecting…</p>
+      </div>
+    </div>
+    <nav class="segmented page-tabs" aria-label="Pages">
+      <button type="button" data-page="data" title="Open AEDAT4 or HDF5 recordings, look at the events, and hand a recording to the pipeline">
+        <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zm0 0v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>Data</button>
+      <button type="button" data-page="live" title="Stream events from the DVXplorer: on this computer, on the Jetson Orin, or a replayed recording">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="currentColor"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6.3 6.3a8 8 0 0 0 0 11.4M17.7 6.3a8 8 0 0 1 0 11.4"/></svg>Live</button>
+      <button type="button" data-page="camera" title="Camera intrinsics: focal lengths, principal point, image size and lens distortion">
+        <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>Camera</button>
+      <button type="button" data-page="pipeline" title="Run main.m step by step in MATLAB, tune its parameters and look at each step's results">
+        <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M5 6h4M5 12h8M5 18h12"/><circle cx="17" cy="6" r="2" fill="currentColor"/><circle cx="19" cy="12" r="2" fill="currentColor" opacity=".6"/></svg>Pipeline</button>
+      <button type="button" data-page="code" title="Read and edit the pipeline's code, with live checks as you type">
+        <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m9 7-5 5 5 5m6-10 5 5-5 5"/></svg>Code</button>
+      <button type="button" data-page="matlab" title="The MATLAB command window, the workspace and the Studio's log">
+        <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 5h16v14H4zM7 10l3 2-3 2M12 15h5"/></svg>MATLAB</button>
+      <button type="button" data-page="build" title="Turn the pipeline into the deployable package and a standalone executable, and test it">
+        <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="m12 3 8 4.5v9L12 21l-8-4.5v-9zm0 0v18M4 7.5l8 4.5 8-4.5"/></svg>Build</button>
+      <button type="button" data-page="journal" title="A dated record of what you did and noted: write notes, see the Studio's activity">
+        <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M6 3h11a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6zM6 3v18M10 8h5M10 12h5"/></svg>Journal</button>
+    </nav>
+    <div class="topstats">
+      <span class="stat" id="statMem" title="Memory available on this computer. Pipeline steps refuse to start below the limit (4 GB by default)."><span class="stat-label">Memory Free</span><span class="stat-value" id="statMemVal">–</span></span>
+      <span class="stat" id="statEvents" hidden title="The recording open on the Data page"><span class="stat-label">Recording</span><span class="stat-value" id="statEventsVal">–</span></span>
+      <span class="stat" id="statLive" hidden title="Event rate of the live stream"><span class="stat-label">Live</span><span class="stat-value" id="statLiveVal">–</span></span>
+      <button id="matlabStart" class="btn btn-sm" hidden title="Start a MATLAB without a desktop and connect it to the Studio (or run studio.start in your own MATLAB)">Start MATLAB</button>
+      <span id="matlabBadge" class="badge badge-warn" title="The MATLAB session the Studio runs code in"><span class="dot"></span><span id="matlabText">MATLAB</span></span>
+    </div>
+  </header>
+
+  <div class="pages">
+    <!-- ================= DATA ================= -->
+    <section id="page-data" class="page" hidden>
+      <aside class="sidebar">
+        <section class="card">
+          <div class="card-head"><h2>Recording</h2><span id="dataPill" class="pill" title="Type of the open recording">None</span></div>
+          <div class="input-row">
+            <input id="dataPath" class="input mono" placeholder="/path/to/recording.aedat4 or .hdf5" spellcheck="false" title="Path of an AEDAT4 (straight from the camera) or HDF5 (the pipeline's format) recording; Enter opens it">
+            <button id="dataBrowse" class="btn" title="Pick a recording from a folder">Browse…</button>
+          </div>
+          <div class="row" style="margin-top:9px"><button id="dataOpen" class="btn btn-primary grow" title="Load the recording into the Studio (about 21 bytes of memory per event)">Open</button>
+            <button id="dataClose" class="btn" hidden title="Close the recording and free the memory it takes in the Studio">Close</button></div>
+          <div id="dataProgress" class="progress" style="margin-top:9px" hidden title="Loading"><div></div></div>
+          <dl id="dataSummary" class="kv" style="margin-top:11px" hidden></dl>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>View</h2><span id="dataCount" class="sub tnum" title="Events in the current window"></span></div>
+          <div class="segmented block wrap5" id="dataMode">
+            <button data-mode="polarity" class="active" title="Events accumulated over the window: ON blue, OFF red">Frame</button>
+            <button data-mode="timesurface" title="Time surface: how recently each pixel fired, fading with the decay τ">Surface</button>
+            <button data-mode="count" title="Events per pixel over the window, log scale">Count</button>
+            <button data-mode="cloud" title="The window's events as a 3-D (x, y, t) cloud you can rotate">Cloud</button>
+            <button data-mode="hot" title="Events per pixel over the whole recording: hot pixels and dead areas">Pixels</button>
+          </div>
+          <div class="fgrid" style="margin-top:11px">
+            <label class="field" title="Start of the window, seconds from the recording's first event (the pipeline uses the same clock)"><span class="field-label">Start [s]</span><input id="dataT0" class="input mono" type="number" step="0.01" value="0"></label>
+            <label class="field" title="Length of the window"><span class="field-label">Window [ms]</span><input id="dataDt" class="input mono" type="number" step="1" min="1" value="50"></label>
+          </div>
+          <input id="dataT0Slider" type="range" min="0" max="1000" value="0" style="margin-top:10px" title="Drag to scrub through the recording">
+          <div class="row" style="margin-top:6px">
+            <button id="dataPlay" class="btn btn-sm" title="Play the window through the recording at the chosen speed">▶ Play</button>
+            <div class="segmented sm" id="dataSpeed" title="Playback speed relative to real time"><button data-v="0.25" title="Quarter speed">¼×</button><button data-v="1" class="active" title="Real time">1×</button><button data-v="5" title="Five times real time">5×</button><button data-v="20" title="Twenty times real time">20×</button></div>
+          </div>
+          <div class="sep"></div>
+          <div class="stack">
+            <label class="toggle" title="Remove the lens distortion with the active camera intrinsics, as the pipeline does"><input id="dataUndist" type="checkbox"><span></span>Undistort (Active Intrinsics)</label>
+            <label class="field" id="dataTauRow" hidden title="How fast the time surface fades: a pixel that fired τ ago is at 37 %"><span class="field-label">Decay τ [ms]</span><input id="dataTau" class="input mono" type="number" value="30" min="1"></label>
+            <label class="field" id="dataCloudRow" hidden><span class="field-label">Cloud Colour</span>
+              <div class="segmented sm" id="dataCloudColor"><button data-v="polarity" class="active" title="ON blue, OFF red">Polarity</button><button data-v="time" title="Colour by time within the window">Time</button></div></label>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Pipeline Input</h2></div>
+          <p class="hint" style="margin-top:0">The pipeline reads HDF5. An AEDAT4 from the camera is converted once, then chosen as the pipeline's recording with the time window below.</p>
+          <label class="field" style="margin-top:9px" title="Where Convert To HDF5 writes the pipeline's copy of this recording (timestamp, x, y, polarity; nothing filtered)"><span class="field-label">HDF5 File</span><input id="convOut" class="input mono" spellcheck="false"></label>
+          <div class="row" style="margin-top:8px">
+            <label class="toggle" title="Replace the HDF5 file if it already exists. Off: an existing file is left alone and Convert stops with a message."><input id="convOverwrite" type="checkbox"><span></span>Overwrite Existing</label>
+            <button id="convBtn" class="btn btn-sm" style="margin-left:auto" title="Write the open AEDAT4 recording to the HDF5 file above in the pipeline's format (all events, timestamps kept). Needed once per recording.">Convert To HDF5</button>
+          </div>
+          <div id="convProgress" class="progress" style="margin-top:8px" hidden title="Converting"><div></div></div>
+          <div class="fgrid" style="margin-top:11px">
+            <label class="field" title="First second of the recording the pipeline uses (cfg.data.start_time_s)"><span class="field-label">Pipeline Start [s]</span><input id="useStart" class="input mono" type="number" step="0.1" value="60"></label>
+            <label class="field" title="Last second of the recording the pipeline uses (cfg.data.end_time_s)"><span class="field-label">Pipeline End [s]</span><input id="useEnd" class="input mono" type="number" step="0.1" value="185"></label>
+          </div>
+          <button id="useBtn" class="btn btn-primary btn-block" style="margin-top:10px" title="Make the HDF5 file and window the pipeline's input. The pipeline starts fresh: its steps reset and MATLAB's workspace is cleared.">Use In Pipeline</button>
+          <p id="useHint" class="hint"></p>
+        </section>
+      </aside>
+      <div class="main">
+        <div class="view-toolbar">
+          <span class="title" id="dataTitle">No Recording</span>
+          <span class="meta" id="dataMeta"></span>
+          <span class="grow"></span>
+          <div id="dataHotInfo" class="meta"></div>
+        </div>
+        <div class="viewer" id="dataViewer">
+          <div class="empty" id="dataEmpty">
+            <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.5" d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zm0 0v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>
+            <b>Open A Recording</b>
+            <span>AEDAT4 straight from the DVXplorer, or the pipeline's HDF5. Everything here runs in the Studio, no MATLAB needed.</span>
+            <button class="btn" id="dataEmptyBrowse" title="Pick a recording from a folder">Browse…</button>
+          </div>
+        </div>
+        <div class="timeline" id="dataTimeline" hidden title="Event rate over the recording. Click to jump, drag to scrub. Shaded: the pipeline's window."><span class="tl-label">Event Rate · Click Or Drag To Scrub · Shaded: Pipeline Window</span><canvas></canvas><span class="tl-hover" id="dataTlHover" hidden></span></div>
+      </div>
+    </section>
+
+    <!-- ================= LIVE ================= -->
+    <section id="page-live" class="page" hidden>
+      <aside class="sidebar">
+        <section class="card">
+          <div class="card-head"><h2>Source</h2><span id="livePill" class="pill" title="Stream state">Stopped</span></div>
+          <div class="segmented block" id="liveSource">
+            <button data-v="camera" class="active" title="A DVXplorer plugged into this computer">Camera</button>
+            <button data-v="remote" title="A DVXplorer plugged into the Jetson Orin (or any computer you can SSH into)">Remote</button>
+            <button data-v="replay" title="Replay the recording open on the Data page in real time">Replay</button>
+          </div>
+          <div id="liveCamBox" style="margin-top:11px">
+            <div class="row"><span class="field-label" style="margin:0">Devices</span><span class="grow"></span><button id="liveScan" class="btn btn-xs" title="Look for cameras on this computer's USB again">Rescan</button></div>
+            <div id="liveDevices" class="hint" style="margin-top:4px">–</div>
+          </div>
+          <div id="liveRemoteBox" style="margin-top:11px" hidden>
+            <p class="hint" style="margin-top:0">The Studio logs in over SSH, sets up a small camera agent there (the first time it installs numpy and dv-processing) and streams its events back over the same connection.</p>
+            <div class="fgrid" style="margin-top:8px">
+              <label class="field" title="Address of the computer the camera is plugged into"><span class="field-label">Host</span><input id="rmHost" class="input mono" spellcheck="false"></label>
+              <label class="field" title="SSH user on that computer"><span class="field-label">User</span><input id="rmUser" class="input mono" spellcheck="false"></label>
+              <label class="field" title="SSH password. Stored in plain text in .studio_cache/settings.json on this computer; leave empty to use an SSH key instead."><span class="field-label">Password</span><input id="rmPass" class="input mono" type="password" autocomplete="off"></label>
+              <label class="field" title="SSH port (22 unless the Orin was set up otherwise)"><span class="field-label">Port</span><input id="rmPort" class="input mono" type="number" min="1" max="65535"></label>
+            </div>
+            <details class="pgroup" style="margin-top:6px"><summary title="Optional connection settings">More Settings</summary>
+              <div class="fgrid" style="margin-top:6px">
+                <label class="field" title="Private key file for SSH instead of a password (e.g. ~/.ssh/id_ed25519)"><span class="field-label">Key File</span><input id="rmKey" class="input mono" spellcheck="false"></label>
+                <label class="field" title="Python on the remote computer the agent's environment is built from"><span class="field-label">Remote Python</span><input id="rmPython" class="input mono" spellcheck="false"></label>
+                <label class="field" title="Folder on the remote computer for the agent"><span class="field-label">Remote Folder</span><input id="rmDir" class="input mono" spellcheck="false"></label>
+                <label class="field" title="Serial number of the camera to open (empty: the first one found)"><span class="field-label">Camera Serial</span><input id="rmSerial" class="input mono" spellcheck="false"></label>
+              </div>
+            </details>
+            <div class="row" style="margin-top:8px">
+              <button id="rmTest" class="btn btn-sm" title="Log in and report the remote computer, its Python and whether an iniVation camera is on its USB">Test Connection</button>
+              <span class="grow"></span>
+              <button id="rmSave" class="btn btn-sm" title="Keep these settings for next time">Save Settings</button>
+            </div>
+            <p id="rmResult" class="hint"></p>
+          </div>
+          <div id="liveReplayBox" style="margin-top:11px" hidden>
+            <p class="hint" style="margin-top:0">Replays the recording open on the Data page in real time, as if it came from the camera.</p>
+            <div class="fgrid" style="margin-top:8px">
+              <label class="field" title="Replay speed relative to real time"><span class="field-label">Speed</span><input id="liveSpeed" class="input mono" type="number" value="1" step="0.25" min="0.05"></label>
+              <label class="field" title="Where in the recording the replay starts"><span class="field-label">From [s]</span><input id="liveFrom" class="input mono" type="number" value="60" step="1" min="0"></label>
+            </div>
+          </div>
+          <div class="row" style="margin-top:12px">
+            <button id="liveStart" class="btn btn-go grow" title="Start streaming from the chosen source">▶ Start</button>
+            <button id="liveStop" class="btn btn-stop" disabled title="Stop streaming (and recording)">Stop</button>
+          </div>
+          <p id="liveStage" class="hint" hidden></p>
+          <p id="liveErr" class="hint err-text" hidden></p>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Display</h2><span id="liveFps" class="sub tnum" title="Frames drawn per second"></span></div>
+          <div class="segmented block" id="liveMode">
+            <button data-mode="polarity" class="active" title="Events over the last window: ON blue, OFF red">Frame</button>
+            <button data-mode="timesurface" title="Time surface: how recently each pixel fired">Surface</button>
+            <button data-mode="count" title="Events per pixel over the window, log scale">Count</button>
+            <button data-mode="cloud" title="The recent events as a 3-D (x, y, t) cloud">Cloud</button>
+          </div>
+          <div class="fgrid" style="margin-top:11px">
+            <label class="field" title="How much of the stream each frame shows"><span class="field-label">Window [ms]</span><input id="liveWindow" class="input mono" type="number" value="33" min="1"></label>
+            <label class="field" title="How fast the time surface fades"><span class="field-label">Decay τ [ms]</span><input id="liveTau" class="input mono" type="number" value="30" min="1"></label>
+          </div>
+          <label class="toggle" style="margin-top:10px" title="Remove the lens distortion with the active camera intrinsics"><input id="liveUndist" type="checkbox"><span></span>Undistort (Active Intrinsics)</label>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Statistics</h2></div>
+          <dl id="liveStats" class="kv"></dl>
+          <canvas id="liveRate" style="width:100%;height:60px;margin-top:8px" title="Event rate over the last few seconds"></canvas>
+        </section>
+        <section class="card" id="liveControlsCard" hidden>
+          <div class="card-head"><h2>Camera Settings</h2></div>
+          <div id="liveControls" class="stack"></div>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Record</h2><span id="recPill" class="pill" title="Recording state">Off</span></div>
+          <label class="field" title="Folder recordings are written to"><span class="field-label">Folder</span><input id="recFolder" class="input mono" spellcheck="false"></label>
+          <button id="recBtn" class="btn btn-block" style="margin-top:9px" disabled title="Record the stream: AEDAT4 from a camera on this computer, the pipeline's HDF5 from a remote camera or a replay">● Record</button>
+          <p class="hint">The file opens on the Data page afterwards.</p>
+        </section>
+      </aside>
+      <div class="main">
+        <div class="view-toolbar"><span class="title" id="liveTitle">Live Events</span><span class="meta" id="liveMeta"></span></div>
+        <div class="viewer" id="liveViewer">
+          <div class="empty" id="liveEmpty">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="currentColor"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M6.3 6.3a8 8 0 0 0 0 11.4M17.7 6.3a8 8 0 0 1 0 11.4M3.5 3.5a12 12 0 0 0 0 17M20.5 3.5a12 12 0 0 1 0 17"/></svg>
+            <b>Not Streaming</b>
+            <span>Plug the DVXplorer Micro into this computer, or into the Jetson Orin (Remote), and press Start. Replay tries the page with the open recording.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= CAMERA ================= -->
+    <section id="page-camera" class="page" hidden>
+      <aside class="sidebar">
+        <section class="card">
+          <div class="card-head"><h2>Calibration File</h2><span id="calPill" class="pill" title="Where the pipeline's choice of file comes from: config.m, or a Studio override"></span></div>
+          <div class="input-row"><select id="calFile" class="input mono" title="Calibration XML files in the project folder"></select></div>
+          <button id="calUse" class="btn btn-sm btn-block" style="margin-top:8px" title="Make this file the one the pipeline reads (steps from Undistort on will rerun)">Use For The Pipeline</button>
+          <dl id="calMeta" class="kv" style="margin-top:10px"></dl>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Intrinsics</h2><span class="sub">Pixels</span></div>
+          <div class="intr-grid">
+            <label class="field" title="Focal length along x [px]"><span class="field-label">f<sub>x</sub></span><input class="input mono" data-k="fx" type="number" step="0.01"></label>
+            <label class="field" title="Focal length along y [px]"><span class="field-label">f<sub>y</sub></span><input class="input mono" data-k="fy" type="number" step="0.01"></label>
+            <label class="field" title="Principal point, x [px]"><span class="field-label">c<sub>x</sub></span><input class="input mono" data-k="cx" type="number" step="0.01"></label>
+            <label class="field" title="Principal point, y [px]"><span class="field-label">c<sub>y</sub></span><input class="input mono" data-k="cy" type="number" step="0.01"></label>
+            <label class="field" title="Image width [px]"><span class="field-label">Width</span><input class="input mono" data-k="width" type="number" step="1"></label>
+            <label class="field" title="Image height [px]"><span class="field-label">Height</span><input class="input mono" data-k="height" type="number" step="1"></label>
+          </div>
+          <div class="card-head" style="margin:14px 0 8px"><h2>Distortion</h2><span class="sub" id="calModel"></span></div>
+          <div class="intr-grid" id="calDist"></div>
+          <p class="hint">The pipeline uses k1 and k2 (equidistant / Kannala-Brandt model, geom.undistort_equidistant).</p>
+          <div class="row" style="margin-top:12px">
+            <button id="calRevert" class="btn btn-sm" title="Undo the edits since the file was loaded">Revert</button>
+            <span class="grow"></span>
+            <button id="calSaveAs" class="btn btn-sm" title="Save the values to a new calibration file">Save As…</button>
+            <button id="calSave" class="btn btn-sm btn-primary" title="Write the values into this file (a backup is kept in .studio_cache/history)">Save</button>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Preview</h2></div>
+          <div class="segmented block" id="calBg">
+            <button data-v="none" class="active" title="The lens model on an empty image">Grid</button>
+            <button data-v="data" title="A frame of the recording open on the Data page; choose which below">Data Frame</button>
+            <button data-v="live" title="The current live frame">Live Frame</button>
+          </div>
+          <div id="calFramePick" class="stack" style="margin-top:10px" hidden>
+            <div class="fgrid">
+              <label class="field" title="Time of the frame, seconds from the recording's first event"><span class="field-label">Frame Time [s]</span><input id="calT0" class="input mono" type="number" step="0.05" value="100"></label>
+              <label class="field" title="How many milliseconds of events the frame accumulates"><span class="field-label">Window [ms]</span><input id="calDt" class="input mono" type="number" step="10" min="1" value="200"></label>
+            </div>
+            <input id="calT0Slider" type="range" min="0" max="1000" value="0" title="Drag to pick the frame">
+            <p id="calFrameHint" class="hint" style="margin:0"></p>
+          </div>
+          <label class="toggle" style="margin-top:10px" title="Show the image with the distortion removed (the grid becomes straight)"><input id="calUndist" type="checkbox"><span></span>Show Undistorted</label>
+          <p class="hint">The grid is straight lines in the ideal pinhole image, drawn where the lens puts them. Edits preview immediately, before saving.</p>
+        </section>
+      </aside>
+      <div class="main">
+        <div class="view-toolbar"><span class="title">Lens Model</span><span class="meta" id="calSummary"></span></div>
+        <div class="viewer" id="calViewer"></div>
+      </div>
+    </section>
+
+    <!-- ================= PIPELINE ================= -->
+    <section id="page-pipeline" class="page" hidden>
+      <aside class="sidebar">
+        <section class="card">
+          <div class="card-head"><h2>Steps</h2><span id="pipePill" class="pill" title="How many steps are up to date"></span></div>
+          <div id="steps" class="steps"></div>
+          <div class="row" style="margin-top:11px">
+            <button id="pipeRunAll" class="btn btn-go grow" title="Run every step that is not up to date, in order">▶ Run All</button>
+            <button id="pipeCancel" class="btn btn-sm" hidden title="Stop after the current step (a step itself can only be interrupted with Ctrl+C in MATLAB)">Stop After Step</button>
+            <button id="pipeReset" class="btn btn-sm" title="Forget which steps ran (and optionally clear MATLAB's workspace)">Reset</button>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Input</h2></div>
+          <dl id="pipeInput" class="kv"></dl>
+          <p class="hint">Choose it on the Data page (Use In Pipeline) or in the Load Events step's parameters. A new recording resets the pipeline.</p>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Overrides</h2><span id="ovrCount" class="count" title="Parameters that differ from config.m">0</span></div>
+          <div id="ovrList" class="stack small"></div>
+          <div class="row" style="margin-top:10px">
+            <button id="ovrClear" class="btn btn-sm" disabled title="Return every parameter to its config.m value">Clear All</button>
+            <span class="grow"></span>
+            <button id="ovrSave" class="btn btn-sm btn-primary" disabled title="Write these values into config.m (a backup of config.m is kept)">Save To config.m</button>
+          </div>
+          <p class="hint">Overrides change cfg without touching config.m. Values derived from them follow.</p>
+        </section>
+      </aside>
+      <div class="main">
+        <div class="step-detail" id="stepDetail">
+          <div class="step-left" id="stepLeft"></div>
+          <div class="step-right">
+            <div class="view-toolbar" id="stepViewBar">
+              <span class="title" id="stepViewTitle">Outputs</span>
+              <div class="chips out-chips" id="stepOutputs"></div>
+              <span class="grow"></span>
+              <span class="meta" id="stepViewMeta"></span>
+            </div>
+            <div class="view-toolbar" id="stepViewCtl" hidden></div>
+            <div class="viewer" id="stepViewer"><div class="empty" id="stepEmpty"><b>Nothing To Show Yet</b><span>Run the step, then pick one of its outputs above.</span></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= CODE ================= -->
+    <section id="page-code" class="page code-page" hidden>
+      <aside class="sidebar" style="padding:10px;gap:8px">
+        <input id="codeFilter" class="input sm" placeholder="Filter Files And Functions…" spellcheck="false" title="Show only files whose name or description contains this">
+        <div id="fileTree" class="file-tree"></div>
+      </aside>
+      <div class="main">
+        <div class="editor-tabs" id="editorTabs"></div>
+        <div class="view-toolbar" style="min-height:40px;padding:5px 10px">
+          <span class="mono muted small" id="editorPath">No File</span>
+          <span class="grow"></span>
+          <span class="muted small" id="lintState" title="Live checks: the Studio's checks as you type, MATLAB's Code Analyzer when MATLAB is free"></span>
+          <span class="muted small" id="editorPos" title="Cursor position"></span>
+          <button id="codeOpenMatlab" class="btn btn-xs" title="Open this file at this line in MATLAB's editor">Open In MATLAB</button>
+          <button id="codeRevert" class="btn btn-xs" title="Discard unsaved changes and reload the file from disk">Revert</button>
+          <button id="codeSave" class="btn btn-xs btn-primary" title="Save (Ctrl+S); the old version goes to .studio_cache/history">Save</button>
+        </div>
+        <div class="editor-wrap" id="editorWrap">
+          <div class="empty" id="editorEmpty"><b>Pick A File</b><span>main.m, config.m and the pipeline's packages. Ctrl+Space completes functions, cfg fields and workspace variables; hover a function for its help; Ctrl+click opens it. Problems are underlined as you type.</span></div>
+        </div>
+      </div>
+      <aside class="side-panel" id="codeSide">
+        <section><div class="card-head" style="margin-bottom:6px"><h2>Problems</h2><span id="lintCount" class="count" title="Problems in this file">–</span></div><div id="lintList"></div></section>
+        <section><div class="card-head" style="margin-bottom:6px"><h2>Function</h2></div><div id="docBox" class="muted small">–</div></section>
+        <section><div class="card-head" style="margin-bottom:6px"><h2>Called By</h2><span id="callerCount" class="count" title="Places in the pipeline that call this function">0</span></div><div id="callerList" class="ref-list"></div></section>
+        <section><div class="card-head" style="margin-bottom:6px"><h2>Calls</h2></div><div id="callsList" class="ref-list"></div></section>
+      </aside>
+    </section>
+
+    <!-- ================= MATLAB ================= -->
+    <section id="page-matlab" class="page matlab-page" hidden>
+      <div class="main">
+        <div class="view-toolbar" style="padding:0 10px;min-height:40px">
+          <div class="tabs" role="tablist">
+            <button data-tab="cmd" class="active" title="Type MATLAB commands; they run in the connected MATLAB's base workspace">Command Window</button>
+            <button data-tab="log" title="Everything the Studio did, with times">Studio Log <span class="count" id="logCount">0</span></button>
+          </div>
+          <span class="grow"></span>
+          <span id="consoleBusy" class="muted small" hidden><span class="spinner"></span> <span id="consoleBusyText"></span></span>
+          <button class="btn btn-ghost btn-xs" id="consoleClear" title="Clear this pane">Clear</button>
+        </div>
+        <div class="console-pane active" data-pane="cmd">
+          <div class="cmdwin">
+            <pre class="cmd-out" id="cmdOut"></pre>
+            <div class="cmd-input"><span class="prompt">&gt;&gt;</span><div id="cmdEditor" class="grow"></div>
+              <button class="btn btn-sm btn-primary" id="cmdRun" title="Run (Enter). Shift+Enter adds a line; ↑ / ↓ recall earlier commands; Tab completes">Run</button></div>
+          </div>
+        </div>
+        <div class="console-pane" data-pane="log"><pre class="log" id="logOut"></pre></div>
+      </div>
+      <aside class="ws">
+        <div class="ws-head">Workspace <span class="count" id="wsCount" title="Variables in MATLAB's base workspace">0</span><span class="grow"></span>
+          <button class="btn btn-ghost btn-xs" id="wsRefresh" title="Refresh the list">↻</button></div>
+        <div class="ws-list"><table class="ws-table"><tbody id="wsBody"></tbody></table></div>
+      </aside>
+    </section>
+
+    <!-- ================= BUILD ================= -->
+    <section id="page-build" class="page wide-side" hidden>
+      <aside class="sidebar">
+        <section class="card">
+          <div class="card-head"><h2>1 · Generate Package</h2><span id="genPill" class="pill" title="Whether the package matches the production code"></span></div>
+          <label class="field" title="The package the pipeline is copied into, +name/ in the project (default: deployable)"><span class="field-label">Package</span>
+            <input id="buildPkg" class="input mono" value="deployable" spellcheck="false"></label>
+          <label class="toggle" style="margin-top:10px" title="Bake the Pipeline page's parameter overrides into the generated config"><input id="buildOvr" type="checkbox" checked><span></span>Include Parameter Overrides (<span id="buildOvrN">0</span>)</label>
+          <dl id="genMeta" class="kv" style="margin-top:10px"></dl>
+          <button id="genBtn" class="btn btn-primary btn-block" style="margin-top:10px" title="Copy main.m, config.m and the packages into the self-contained package (diagnostics/make_deployable.py)">Generate From Production</button>
+          <p class="hint">Copies main.m, config.m and the packages into a self-contained package with every reference rewritten. Your edits on the Code page are included.</p>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>2 · Compile Standalone</h2><span id="exePill" class="pill" title="Whether the executable matches the package"></span></div>
+          <dl id="exeMeta" class="kv"></dl>
+          <button id="compileBtn" class="btn btn-primary btn-block" style="margin-top:10px" title="Run <package>.build_standalone in MATLAB (MATLAB Compiler, mcc)">Compile With MATLAB Compiler</button>
+          <p class="hint">The executable needs the MATLAB Runtime of this release.</p>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>3 · Test Run</h2><span id="runPill" class="pill" title="Test-run state"></span></div>
+          <label class="field" title="The recording the executable reads"><span class="field-label">Recording (HDF5)</span><input id="runH5" class="input mono" spellcheck="false"></label>
+          <div class="fgrid" style="margin-top:9px">
+            <label class="field" title="First second used (at least 48 s before End: the initialisation needs them)"><span class="field-label">Start [s]</span><input id="runStart" class="input mono" type="number" value="60"></label>
+            <label class="field" title="Last second used"><span class="field-label">End [s]</span><input id="runEnd" class="input mono" type="number" value="185"></label>
+          </div>
+          <label class="field" style="margin-top:9px" title="Where the executable writes result.mat, the clouds and the tables"><span class="field-label">Output Folder</span><input id="runOut" class="input mono" spellcheck="false"></label>
+          <div class="row" style="margin-top:10px">
+            <button id="runBtn" class="btn btn-go grow" title="Run the compiled executable on the recording">▶ Run Executable</button>
+            <button id="runStop" class="btn btn-stop" hidden title="Stop the executable">Stop</button>
+          </div>
+          <dl id="runSummary" class="kv" style="margin-top:10px"></dl>
+        </section>
+      </aside>
+      <div class="main">
+        <div class="view-toolbar"><span class="title">Build Output</span><span class="grow"></span>
+          <div class="segmented sm" id="buildView"><button data-v="log" class="active" title="Messages of the generator, the compiler and the test run">Log</button><button data-v="cloud" title="The point cloud the test run produced">Result Cloud</button></div></div>
+        <pre class="log" id="buildLog" style="flex:1"></pre>
+        <div class="viewer" id="buildViewer" hidden></div>
+      </div>
+    </section>
+
+    <!-- ================= JOURNAL ================= -->
+    <section id="page-journal" class="page journal-page" hidden>
+      <div class="main">
+        <div class="view-toolbar">
+          <span class="title">Journal</span><span class="meta" id="jrnMeta"></span><span class="grow"></span>
+          <input id="jrnFilter" class="input sm" style="width:220px" placeholder="Search…" spellcheck="false" title="Show only entries containing this text">
+          <label class="toggle" title="Show the Studio's automatic activity entries"><input id="jrnAuto" type="checkbox" checked><span></span>Activity</label>
+          <button id="jrnExport" class="btn btn-xs" title="Write the journal to JOURNAL.md in the project folder">Export JOURNAL.md</button>
+        </div>
+        <div class="journal" id="jrnList"></div>
+        <div class="journal-input">
+          <textarea id="jrnText" class="input" rows="2" placeholder="Write a note… (Enter sends, Shift+Enter adds a line)" title="Your note; it is saved with the time"></textarea>
+          <button id="jrnSend" class="btn btn-primary" title="Save the note (Enter)">Send</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- inspector drawer -->
+  <aside class="drawer" id="drawer" hidden>
+    <div class="drawer-head"><h3 id="drawerTitle">–</h3><span class="muted small" id="drawerMeta"></span><span class="grow"></span>
+      <div class="chips" id="drawerViews"></div>
+      <button class="btn btn-ghost btn-sm" id="drawerClose" title="Close (Esc)">✕</button></div>
+    <div class="view-toolbar" id="drawerCtl" hidden></div>
+    <div class="drawer-body" id="drawerBody"></div>
+  </aside>
+
+  <!-- file browser -->
+  <dialog class="dialog" id="fileDialog">
+    <div class="dialog-inner">
+      <div class="dialog-head"><h2 id="fileDialogTitle">Open A Recording</h2><span class="grow"></span><span class="muted small">.aedat4 · .hdf5</span></div>
+      <div class="dialog-body">
+        <div class="places" id="filePlaces"></div>
+        <div class="browser">
+          <div class="path input-row"><button class="btn btn-sm" id="fileUp" title="Parent folder">↑</button><input class="input sm mono" id="fileDir" spellcheck="false" title="Folder; type a path and press Enter"></div>
+          <div class="folder-list" id="fileList"></div>
+        </div>
+      </div>
+      <div class="dialog-foot"><span class="mono muted small grow" id="fileSel"></span>
+        <button class="btn" id="fileCancel" title="Close without opening">Cancel</button><button class="btn btn-primary" id="fileOk" disabled title="Open the selected recording">Open</button></div>
+    </div>
+  </dialog>
+
+  <div class="toasts" id="toasts"></div>
+</body>
+</html>
